@@ -1,0 +1,65 @@
+{
+  "name": "@dlenroc/typed-client",
+  "version": "0.1.0",
+  "description": "Contract-first typed HTTP client for Fetch, Playwright and k6",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dlenroc/typed-client.git"
+  },
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./fetch": {
+      "types": "./dist/fetch.d.ts",
+      "default": "./dist/fetch.js"
+    },
+    "./playwright": {
+      "types": "./dist/playwright.d.ts",
+      "default": "./dist/playwright.js"
+    },
+    "./k6": {
+      "types": "./dist/k6.d.ts",
+      "default": "./dist/k6.js"
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsdown --no-config src/index.ts src/fetch.ts src/playwright.ts src/k6.ts --format esm --platform neutral --target es2022 --deps.never-bundle k6/http --deps.never-bundle node:buffer",
+    "typecheck": "npm run build && tsc",
+    "test": "npm run build && vitest run --typecheck",
+    "prepack": "npm run build"
+  },
+  "devDependencies": {
+    "@types/k6": "2.3.1",
+    "@types/node": "26.6.6",
+    "playwright-core": "1.65.0",
+    "tsdown": "0.23.7",
+    "typescript": "7.0.2",
+    "vitest": "5.1.0"
+  },
+  "peerDependencies": {
+    "@types/k6": "^2.2.0",
+    "playwright-core": "^1.62.0"
+  },
+  "peerDependenciesMeta": {
+    "playwright-core": {
+      "optional": true
+    },
+    "@types/k6": {
+      "optional": true
+    }
+  },
+  "engines": {
+    "node": ">=24.11.0"
+  }
+}

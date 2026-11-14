@@ -1,0 +1,471 @@
+import type { FileData, Params, RequestBody, Response } from "k6/http";
+import http from "k6/http";
+import { RequestPreparationError, TransportFailure } from "../core/errors.js";
+import type {
+  BinaryInput,
+  FieldScalar,
+  Fields,
+  MultipartFile,
+  RequestKindMap,
+  ResponseHeaders,
+  ResponseKindMap,
+  Transport,
+  TransportResponse,
+} from "../core/types.js";
+import { encodeFields, forEachField } from "../shared/fields.js";
+import { createUrlResolver } from "../shared/url.js";
+import { binaryView, encodeJson } from "./body.js";
+import { decodeMultipart, decodeUrlEncoded, decodeUtf8, encodeUtf8 } from "./codec.js";
+import { prepareHeaders } from "./headers.js";
+
+interface K6RequestKinds extends Omit<RequestKindMap, "multipart"> {
+  readonly multipart: Fields<FieldScalar | MultipartFile | FileData>;
+}
+
+type K6Http = Pick<typeof import("k6/http"), "asyncRequest" | "file">;
+
+interface K6ResponseMetadata {
+  readonly timings: Response["timings"];
+  readonly proto: Response["proto"];
+  readonly remote_ip: Response["remote_ip"];
+  readonly error: Response["error"];
+  readonly error_code: Response["error_code"];
+}
+
+type K6Part = string | FileData | MultipartFile;
+
+const NATIVE_OPTION_KEYS = [
+  "cookies",
+  "timeout",
+  "redirects",
+  "auth",
+  "compression",
+  "tags",
+  "jar",
+  "responseCallback",
+] as const;
+
+type K6NativeOptions = Pick<Params, (typeof NATIVE_OPTION_KEYS)[number]>;
+
+function toK6ArrayBuffer(data: BinaryInput) {
+  if (data instanceof ArrayBuffer) {
+    return data;
+  }
+
+  const bytes = binaryView(data);
+
+  if (
+    bytes.byteOffset === 0 &&
+    bytes.byteLength === bytes.buffer.byteLength &&
+    bytes.buffer instanceof ArrayBuffer
+  ) {
+    return bytes.buffer;
+  }
+
+  // http.file requires an ArrayBuffer, so copy only the selected bytes.
+  return bytes.slice().buffer;
+}
+
+function manualMultipart() {
+  const boundary = "typed-client-" + Math.random().toString(36).slice(2);
+  const chunks: (string | Uint8Array)[] = [];
+  let hasBinary = false;
+
+  function add(value: string | Uint8Array) {
+    if (typeof value !== "string") {
+      hasBinary = true;
+      chunks.push(value);
+    } else if (typeof chunks[chunks.length - 1] === "string") {
+      chunks[chunks.length - 1] += value;
+    } else {
+      chunks.push(value);
+    }
+  }
+
+  function append(name: string, value: K6Part) {
+    const escapedName = name.replaceAll('"', "%22").replace(/[\r\n]/g, "");
+
+    if (typeof value === "string") {
+      add(
+        `--${boundary}\r\n` +
+          `Content-Disposition: form-data; name="${escapedName}"\r\n\r\n${value}\r\n`,
+      );
+
+      return;
+    }
+
+    const native = "content_type" in value || typeof value.data === "string";
+    const filename = (value.filename ?? "blob")
+      .replaceAll('"', "%22")
+      .replace(/[\r\n]/g, "");
+    const mediaType = native
+      ? ((value as FileData).content_type ?? "application/octet-stream")
+      : ((value as MultipartFile).mediaType ?? "application/octet-stream");
+
+    add(
+      `--${boundary}\r\n` +
+        `Content-Disposition: form-data; name="${escapedName}"; filename="${filename}"\r\n` +
+        `Content-Type: ${mediaType}\r\n\r\n`,
+    );
+    add(typeof value.data === "string" ? value.data : binaryView(value.data));
+    add("\r\n");
+  }
+
+  function finish() {
+    add(`--${boundary}--\r\n`);
+    const contentType = `multipart/form-data; boundary=${boundary}`;
+
+    if (!hasBinary) {
+      return { body: chunks.join(""), contentType };
+    }
+
+    const encodedChunks: Uint8Array[] = [];
+    let length = 0;
+
+    for (const chunk of chunks) {
+      const bytes = typeof chunk === "string" ? encodeUtf8(chunk) : chunk;
+      encodedChunks.push(bytes);
+      length += bytes.byteLength;
+    }
+
+    const encoded = new Uint8Array(length);
+    let offset = 0;
+
+    for (const chunk of encodedChunks) {
+      encoded.set(chunk, offset);
+      offset += chunk.length;
+    }
+
+    return { body: encoded.buffer, contentType };
+  }
+
+  return { append, finish };
+}
+
+function k6Multipart(
+  body: K6RequestKinds["multipart"],
+  httpApi: K6Http,
+  forceManual: boolean,
+): { body: Record<string, unknown> | string | ArrayBuffer; contentType?: string } {
+  const nativeParts: Record<string, K6Part> = Object.create(null);
+  const fieldNames: string[] = [];
+  let manualEncoder = forceManual ? manualMultipart() : undefined;
+  let containsFile = false;
+
+  forEachField(body, (name, value) => {
+    if (value === undefined) {
+      return;
+    }
+
+    const part = value === null ? "" : typeof value === "object" ? value : String(value);
+
+    if (typeof part !== "string") {
+      containsFile = true;
+    }
+
+    // k6's native multipart object keeps only one value per name.
+    if (manualEncoder === undefined && nativeParts[name] !== undefined) {
+      manualEncoder = manualMultipart();
+      for (const priorName of fieldNames) {
+        manualEncoder.append(priorName, nativeParts[priorName]!);
+      }
+    }
+
+    if (manualEncoder !== undefined) {
+      manualEncoder.append(name, part);
+    } else {
+      nativeParts[name] = part;
+      fieldNames.push(name);
+    }
+  });
+
+  // k6 encodes text-only objects as URL-encoded data.
+  if (manualEncoder === undefined && !containsFile) {
+    manualEncoder = manualMultipart();
+    for (const name of fieldNames) {
+      manualEncoder.append(name, nativeParts[name]!);
+    }
+  }
+
+  if (manualEncoder !== undefined) {
+    return manualEncoder.finish();
+  }
+
+  for (const name of fieldNames) {
+    const part = nativeParts[name]!;
+    if (
+      typeof part === "object" &&
+      !("content_type" in part || typeof part.data === "string")
+    ) {
+      nativeParts[name] = httpApi.file(
+        toK6ArrayBuffer(part.data as BinaryInput),
+        part.filename ?? "blob",
+        (part as MultipartFile).mediaType ?? "application/octet-stream",
+      );
+    }
+  }
+
+  return { body: nativeParts };
+}
+
+function normalizeHeaders(source: Record<string, string | readonly string[]>): ResponseHeaders {
+  const target: Record<string, string | readonly string[]> = Object.create(null);
+
+  for (const name in source) {
+    const key = name.toLowerCase();
+    const value = source[name]!;
+    const previous = target[key];
+
+    if (previous === undefined) {
+      target[key] = value;
+    } else {
+      const combined = typeof previous === "string" ? [previous] : [...previous];
+      if (typeof value === "string") {
+        combined.push(value);
+      } else {
+        for (const part of value) {
+          combined.push(part);
+        }
+      }
+
+      target[key] = combined;
+    }
+  }
+
+  return target;
+}
+
+class K6ResponseHandle implements TransportResponse<ResponseKindMap, K6ResponseMetadata> {
+  readonly status: number;
+  readonly url: string;
+  readonly headers: ResponseHeaders;
+  readonly transport: K6ResponseMetadata;
+  private consumed = false;
+
+  constructor(private readonly native: Response) {
+    this.status = native.status;
+    this.url = native.url;
+    this.headers = normalizeHeaders(native.headers);
+
+    // The native timings object retains the response body.
+    const timings = native.timings;
+    this.transport = {
+      timings: {
+        blocked: timings.blocked,
+        connecting: timings.connecting,
+        tls_handshaking: timings.tls_handshaking,
+        sending: timings.sending,
+        waiting: timings.waiting,
+        receiving: timings.receiving,
+        duration: timings.duration,
+      },
+      proto: native.proto,
+      remote_ip: native.remote_ip,
+      error: native.error,
+      error_code: native.error_code,
+    };
+  }
+
+  async read<Kind extends keyof ResponseKindMap>(kind: Kind): Promise<ResponseKindMap[Kind]> {
+    if (this.consumed) {
+      throw new TypeError("Response has already been read");
+    }
+
+    this.consumed = true;
+
+    if (kind === "none") {
+      return undefined as never;
+    }
+
+    if (kind === "json") {
+      return this.native.json() as never;
+    }
+
+    const captured = this.native.body;
+    if (captured === null) {
+      throw new TypeError("k6 discarded response body");
+    }
+
+    if (kind === "binary" || kind === "multipart") {
+      if (!(captured instanceof ArrayBuffer)) {
+        throw new TypeError("k6 did not capture binary body");
+      }
+
+      const bytes = new Uint8Array(captured);
+      return (
+        kind === "binary" ? bytes : decodeMultipart(bytes, this.headers["content-type"])
+      ) as never;
+    }
+
+    const text = typeof captured === "string" ? captured : decodeUtf8(captured);
+    if (kind === "text") {
+      return text as never;
+    }
+
+    if (kind === "urlencoded") {
+      return decodeUrlEncoded(text) as never;
+    }
+
+    throw new TypeError(`Unsupported k6 response kind: ${String(kind)}`);
+  }
+}
+
+/**
+ * Capture response bodies according to the expected response kinds.
+ *
+ * @remarks
+ * Use k6 2.2 or later and add `@types/k6` for TypeScript. Bundle npm
+ * imports for k6. Multipart fields accept `http.file()` values. Use a
+ * single value per request header.
+ *
+ * @example
+ * ```ts
+ * import { c } from "@dlenroc/typed-client";
+ * import { k6Transport } from "@dlenroc/typed-client/k6";
+ *
+ * const transport = k6Transport({ baseUrl: "https://api.example.test" });
+ * const health = c.bind(c.endpoint("/health"), transport);
+ *
+ * export default async function () {
+ *   await health({ status: 204, tags: { name: "health" } });
+ * }
+ * ```
+ *
+ * @see {@link https://grafana.com/docs/k6/latest/using-k6/modules/ | Modules}
+ */
+export function k6Transport(
+  config: {
+    /** Relative endpoints append to this URL's path. */
+    readonly baseUrl?: string;
+
+    /** @defaultValue The `k6/http` module */
+    readonly http?: K6Http;
+  } = {},
+): Transport<K6RequestKinds, ResponseKindMap, K6NativeOptions, K6ResponseMetadata> {
+  const httpApi = config.http ?? http;
+  const resolveUrl = createUrlResolver(config.baseUrl);
+
+  return async (request) => {
+    const url = resolveUrl(request.url);
+
+    try {
+      let contentTypeSuppressed = false;
+      const selectedHeaders =
+        request.headers === undefined && request.body === undefined
+          ? undefined
+          : prepareHeaders(
+              request.headers,
+              request.bodyKind,
+              request.body !== undefined,
+              (suppressed) => {
+                contentTypeSuppressed = suppressed;
+              },
+            );
+
+      let body: RequestBody | null = null;
+
+      try {
+        if (request.body !== undefined) {
+          switch (request.bodyKind) {
+            case "none":
+              throw new RequestPreparationError("none request body kind cannot have a body");
+
+            case "json":
+              body = encodeJson(request.body);
+              break;
+
+            case "text":
+              body = request.body as string;
+              break;
+
+            case "binary":
+              // k6 accepts byte views even though RequestBody omits them.
+              body = (
+                request.body instanceof ArrayBuffer
+                  ? request.body
+                  : binaryView(request.body as BinaryInput)
+              ) as RequestBody;
+              break;
+
+            case "urlencoded":
+              body = encodeFields(request.body as RequestKindMap["urlencoded"]);
+              break;
+
+            case "multipart": {
+              const multipart = k6Multipart(
+                request.body as K6RequestKinds["multipart"],
+                httpApi,
+                contentTypeSuppressed,
+              );
+              body = multipart.body as RequestBody;
+
+              if (selectedHeaders !== undefined && !contentTypeSuppressed) {
+                const supplied = selectedHeaders["content-type"];
+                if (supplied === undefined || request.input?.unchecked !== true) {
+                  if (multipart.contentType !== undefined) {
+                    selectedHeaders["content-type"] = multipart.contentType;
+                  } else if (supplied !== undefined) {
+                    delete selectedHeaders["content-type"];
+                  }
+                }
+              }
+              break;
+            }
+
+            default:
+              throw new RequestPreparationError(
+                `Unsupported k6 body kind: ${String(request.bodyKind)}`,
+              );
+          }
+        }
+      } catch (cause) {
+        if (cause instanceof RequestPreparationError) {
+          throw cause;
+        }
+
+        throw new RequestPreparationError("Failed to prepare k6 request", { cause });
+      }
+
+      if (selectedHeaders !== undefined) {
+        for (const name in selectedHeaders) {
+          if (typeof selectedHeaders[name] !== "string") {
+            throw new RequestPreparationError(
+              `k6 cannot preserve repeated request header: ${name}`,
+            );
+          }
+        }
+      }
+
+      let responseType: "none" | "text" | "binary" = "none";
+      for (const kind of request.responseKinds) {
+        if (kind === "binary" || kind === "multipart") {
+          responseType = "binary";
+          break;
+        }
+
+        if (kind !== "none") {
+          responseType = "text";
+        }
+      }
+
+      const params: Record<string, unknown> = { responseType };
+      if (selectedHeaders !== undefined) {
+        params.headers = selectedHeaders;
+      }
+
+      if (request.input != null) {
+        for (const key of NATIVE_OPTION_KEYS) {
+          const value = request.input[key];
+          if (value !== undefined) {
+            params[key] = value;
+          }
+        }
+      }
+
+      const response = await httpApi.asyncRequest(request.method, url, body, params as Params);
+      return new K6ResponseHandle(response);
+    } catch (cause) {
+      throw new TransportFailure(url, cause);
+    }
+  };
+}
