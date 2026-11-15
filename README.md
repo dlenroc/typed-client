@@ -99,7 +99,7 @@ returned stream when finished with it.
 
 Omitting the body or passing `undefined` sends no body and skips the automatic
 Content-Type header. JSON `null` is sent as a value. JSON serialization failures
-raise a `request-prepare` error. Leave the body absent for Fetch `GET` and `HEAD`
+raise a `request` error. Leave the body absent for Fetch `GET` and `HEAD`
 requests.
 
 ### Fields, headers and files
@@ -251,33 +251,29 @@ try {
   await api.users.get({ path: { id: 42 }, status: 200 });
 } catch (error) {
   if (error instanceof ClientError && error.code === "status") {
-    console.error(error.meta.operationId, error.status, error.expectedStatuses);
+    console.error(error.meta.operationId, error.status);
   }
 
   throw error;
 }
 ```
 
-| Code               | When it occurs                             | Additional fields           |
-| ------------------ | ------------------------------------------ | --------------------------- |
-| `request-input`    | The status list is empty                   |                             |
-| `request-url`      | URL construction fails                     |                             |
-| `request-prepare`  | The transport cannot prepare the request   |                             |
-| `request-schema`   | A request schema reports issues or throws  | `field`, `reason`, `issues` |
-| `transport`        | The transport call fails                   |                             |
-| `status`           | The status falls outside the accepted set  | `expectedStatuses`          |
-| `response-decode`  | The body cannot be decoded                 | `kind`                      |
-| `response-schema`  | A response schema reports issues or throws | `field`, `reason`, `issues` |
-| `response-cleanup` | Cleanup is the only failure                |                             |
+| Code        | When it occurs                                                       | Fields             |
+| ----------- | -------------------------------------------------------------------- | ------------------ |
+| `request`   | Nothing was sent: call input, URL, preparation, or a request schema  | `schema`, `issues` |
+| `transport` | The transport failed to deliver or release a response                | `status` if any    |
+| `status`    | The status falls outside the accepted set                            | `status`           |
+| `response`  | The body cannot be decoded, or a response schema rejects the response | `status`, `schema`, `issues` |
 
-Every `ClientError` includes `method` and `meta`. `url` is set when available.
-Status, decoding, response schema, and cleanup errors also carry `status`
-and raw `headers`. Schema errors include `issues` when `reason` is `"issues"`.
+Every `ClientError` includes `method`, `meta`, and `cause`. `url` is set when
+available. `schema` names the schema that failed: `path`, `query`, `headers`,
+or `body`. That schema either reported `issues` or threw `cause`. A `response`
+error without `schema` means the body could not be decoded.
 
-`cause` holds the underlying failure. If cleanup also fails,
-`cleanupError` holds the secondary failure. Reporters that serialize errors
-can read `code`, `meta`, and other enumerable diagnostics. Read
-`message` and `cause` explicitly when building a JSON report.
+If cleanup fails as well, `cleanupError` holds the secondary failure.
+Reporters that serialize errors can read `code`, `meta`, and the other
+enumerable fields. Read `message` and `cause` explicitly when building a
+JSON report.
 
 ## Other transports
 

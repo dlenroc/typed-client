@@ -7,7 +7,6 @@ import {
   RequestPreparationError,
   ResponseCleanupError,
   TransportFailure,
-  type ErrorContext,
 } from "./errors.js";
 import type {
   AnyTransport,
@@ -21,31 +20,47 @@ import type {
 } from "./types.js";
 
 const ONLY_NONE = ["none"] as const;
+const NO_RESPONSE = "Transport failed to return a response";
+
+type Meta = Endpoint["meta"];
 
 function schemaError(
-  origin: "request" | "response",
-  field: "path" | "query" | "headers" | "body",
-  context: ErrorContext,
-  failure: { readonly issues: readonly StandardIssue[] } | { readonly cause: unknown },
-  response?: { status: number; headers: TransportResponse["headers"] },
+  method: string,
+  url: string | undefined,
+  meta: Meta,
+  status: number | undefined,
+  schema: "path" | "query" | "headers" | "body",
+  issues: readonly StandardIssue[] | undefined,
+  cause: unknown,
 ): ClientError {
-  const details =
-    "issues" in failure
-      ? { reason: "issues" as const, issues: failure.issues }
-      : { reason: "exception" as const, cause: failure.cause };
+  const outcome =
+    issues === undefined
+      ? "threw"
+      : `reported ${issues.length} issue${issues.length === 1 ? "" : "s"}`;
 
-  return new ClientError(
-    origin === "request"
-      ? { ...context, ...details, code: "request-schema", field }
-      : {
-          ...context,
-          ...details,
-          code: "response-schema",
-          field: field as "headers" | "body",
-          status: response!.status,
-          headers: response!.headers,
-        },
-  );
+  return status === undefined
+    ? new ClientError(
+        "request",
+        `Request ${schema} schema ${outcome}`,
+        method,
+        url,
+        meta,
+        undefined,
+        schema,
+        issues,
+        cause,
+      )
+    : new ClientError(
+        "response",
+        `Response ${schema} schema ${outcome} (status ${status})`,
+        method,
+        url,
+        meta,
+        status,
+        schema,
+        issues,
+        cause,
+      );
 }
 
 function selectResponseKinds(
@@ -119,17 +134,20 @@ async function invoke(
   const method = unchecked
     ? ((input?.method as string | undefined) ?? endpoint.method)
     : endpoint.method;
-  const context: { method: string; url?: string; meta: Endpoint["meta"] } = {
-    method,
-    meta: endpoint.meta,
-  };
+  const meta = endpoint.meta;
 
   if (Array.isArray(expectedStatus) && expectedStatus.length === 0) {
-    throw new ClientError({
-      ...context,
-      code: "request-input",
-      cause: new TypeError("status must not be empty"),
-    });
+    throw new ClientError(
+      "request",
+      "Invalid call input",
+      method,
+      undefined,
+      meta,
+      undefined,
+      undefined,
+      undefined,
+      new TypeError("status must not be empty"),
+    );
   }
 
   let path = input?.path;
@@ -146,11 +164,11 @@ async function invoke(
           result = await result;
         }
       } catch (cause) {
-        throw schemaError("request", "path", context, { cause });
+        throw schemaError(method, undefined, meta, undefined, "path", undefined, cause);
       }
 
       if (result.issues) {
-        throw schemaError("request", "path", context, { issues: result.issues });
+        throw schemaError(method, undefined, meta, undefined, "path", result.issues, undefined);
       }
 
       path = result.value;
@@ -164,11 +182,11 @@ async function invoke(
           result = await result;
         }
       } catch (cause) {
-        throw schemaError("request", "query", context, { cause });
+        throw schemaError(method, undefined, meta, undefined, "query", undefined, cause);
       }
 
       if (result.issues) {
-        throw schemaError("request", "query", context, { issues: result.issues });
+        throw schemaError(method, undefined, meta, undefined, "query", result.issues, undefined);
       }
 
       query = result.value;
@@ -182,11 +200,11 @@ async function invoke(
           result = await result;
         }
       } catch (cause) {
-        throw schemaError("request", "headers", context, { cause });
+        throw schemaError(method, undefined, meta, undefined, "headers", undefined, cause);
       }
 
       if (result.issues) {
-        throw schemaError("request", "headers", context, { issues: result.issues });
+        throw schemaError(method, undefined, meta, undefined, "headers", result.issues, undefined);
       }
 
       headers = result.value;
@@ -200,11 +218,11 @@ async function invoke(
           result = await result;
         }
       } catch (cause) {
-        throw schemaError("request", "body", context, { cause });
+        throw schemaError(method, undefined, meta, undefined, "body", undefined, cause);
       }
 
       if (result.issues) {
-        throw schemaError("request", "body", context, { issues: result.issues });
+        throw schemaError(method, undefined, meta, undefined, "body", result.issues, undefined);
       }
 
       body = result.value;
@@ -218,7 +236,17 @@ async function invoke(
       query as QueryInput | undefined,
     );
   } catch (cause) {
-    throw new ClientError({ ...context, code: "request-url", cause });
+    throw new ClientError(
+      "request",
+      "Request URL construction failed",
+      method,
+      undefined,
+      meta,
+      undefined,
+      undefined,
+      undefined,
+      cause,
+    );
   }
 
   const bodyKind = unchecked ? (input?.bodyKind ?? endpoint.body.kind) : endpoint.body.kind;
@@ -238,19 +266,27 @@ async function invoke(
   try {
     handle = await transport(transportRequest);
   } catch (failure) {
-    context.url = failure instanceof TransportFailure ? failure.url : transportRequest.url;
-
+    const failedUrl = failure instanceof TransportFailure ? failure.url : transportRequest.url;
     const attempt = failure instanceof TransportFailure ? failure.cause : failure;
     const cause = attempt instanceof FailureWithCleanupError ? attempt.cause : attempt;
-    const wrapped =
-      cause instanceof RequestPreparationError
-        ? new ClientError({ ...context, code: "request-prepare", cause })
-        : new ClientError({ ...context, code: "transport", cause });
+    const prepared = !(cause instanceof RequestPreparationError);
+    const wrapped = new ClientError(
+      prepared ? "transport" : "request",
+      prepared ? NO_RESPONSE : "Request preparation failed",
+      method,
+      failedUrl,
+      meta,
+      undefined,
+      undefined,
+      undefined,
+      cause,
+    );
 
     throw preserveCleanupError(wrapped, attempt);
   }
 
-  context.url = handle.url;
+  const responseUrl = handle.url;
+
   const status = handle.status;
   const responseSpec = endpoint.responses[status];
   const accepted =
@@ -261,22 +297,26 @@ async function invoke(
         : expectedStatus.includes(status);
 
   if (!accepted) {
-    const expectedStatuses =
+    const expected =
       expectedStatus === undefined
-        ? Object.keys(endpoint.responses).map(Number)
+        ? Object.keys(endpoint.responses).join(", ")
         : typeof expectedStatus === "number"
-          ? [expectedStatus]
-          : expectedStatus;
+          ? expectedStatus
+          : expectedStatus.join(", ");
 
     return rejectResponse(
       handle,
-      new ClientError({
-        ...context,
-        code: "status",
+      new ClientError(
+        "status",
+        `Unexpected status ${status}; expected ${expected}`,
+        method,
+        responseUrl,
+        meta,
         status,
-        expectedStatuses,
-        headers: handle.headers,
-      }),
+        undefined,
+        undefined,
+        undefined,
+      ),
     );
   }
 
@@ -292,13 +332,16 @@ async function invoke(
         result = await result;
       }
     } catch (cause) {
-      return rejectResponse(handle, schemaError("response", "headers", context, { cause }, handle));
+      return rejectResponse(
+        handle,
+        schemaError(method, responseUrl, meta, status, "headers", undefined, cause),
+      );
     }
 
     if (result.issues) {
       return rejectResponse(
         handle,
-        schemaError("response", "headers", context, { issues: result.issues }, handle),
+        schemaError(method, responseUrl, meta, status, "headers", result.issues, undefined),
       );
     }
 
@@ -313,15 +356,30 @@ async function invoke(
   } catch (failure) {
     const cause = failure instanceof FailureWithCleanupError ? failure.cause : failure;
     const cleanupFailed = cause instanceof ResponseCleanupError;
-    const diagnostics = { ...context, status, headers: handle.headers };
     const wrapped =
       kind === "none" || cleanupFailed
-        ? new ClientError({
-            ...diagnostics,
-            code: "response-cleanup",
-            cause: cleanupFailed ? cause.cause : cause,
-          })
-        : new ClientError({ ...diagnostics, code: "response-decode", kind, cause });
+        ? new ClientError(
+            "transport",
+            `Response cleanup failed (status ${status})`,
+            method,
+            responseUrl,
+            meta,
+            status,
+            undefined,
+            undefined,
+            cleanupFailed ? cause.cause : cause,
+          )
+        : new ClientError(
+            "response",
+            `Cannot decode ${kind} response (status ${status})`,
+            method,
+            responseUrl,
+            meta,
+            status,
+            undefined,
+            undefined,
+            cause,
+          );
 
     throw preserveCleanupError(wrapped, failure);
   }
@@ -336,7 +394,7 @@ async function invoke(
     } catch (cause) {
       return rejectResponse(
         handle,
-        schemaError("response", "body", context, { cause }, handle),
+        schemaError(method, responseUrl, meta, status, "body", undefined, cause),
         true,
       );
     }
@@ -344,7 +402,7 @@ async function invoke(
     if (result.issues) {
       return rejectResponse(
         handle,
-        schemaError("response", "body", context, { issues: result.issues }, handle),
+        schemaError(method, responseUrl, meta, status, "body", result.issues, undefined),
         true,
       );
     }
@@ -353,12 +411,12 @@ async function invoke(
   }
 
   if (handle.transport === undefined) {
-    return { status, url: handle.url, headers: responseHeaders, body: responseBody };
+    return { status, url: responseUrl, headers: responseHeaders, body: responseBody };
   }
 
   return {
     status,
-    url: handle.url,
+    url: responseUrl,
     headers: responseHeaders,
     body: responseBody,
     transport: handle.transport,

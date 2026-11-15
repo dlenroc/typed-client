@@ -307,26 +307,26 @@ test("retain custom transport options, callback types, and response metadata", a
   await get({ unchecked: true, path: "/malformed" });
 });
 
-test("narrow ClientError diagnostics by code and reason", (error?: unknown) => {
+test("narrow ClientError diagnostics by code", (error?: unknown) => {
   if (!(error instanceof ClientError)) {
     return;
   }
 
   if (error.code === "status") {
-    expectTypeOf(error.expectedStatuses).toEqualTypeOf<readonly number[]>();
-    expectTypeOf(error.headers).toEqualTypeOf<ResponseHeaders>();
+    expectTypeOf(error.status).toEqualTypeOf<number>();
+    expectTypeOf(error.schema).toEqualTypeOf<undefined>();
+    expectTypeOf(error.issues).toEqualTypeOf<undefined>();
   }
-  if (error.code === "request-schema") {
-    // @ts-expect-error request errors have no response status
-    error.status;
-    if (error.reason === "issues") {
-      expectTypeOf(error.issues[0]?.message).toEqualTypeOf<string | undefined>();
-    } else {
-      // @ts-expect-error validator exceptions do not carry issues
-      error.issues;
-    }
+  if (error.code === "request") {
+    expectTypeOf(error.status).toEqualTypeOf<undefined>();
+    expectTypeOf(error.schema).toEqualTypeOf<"path" | "query" | "headers" | "body" | undefined>();
+    expectTypeOf(error.issues?.[0]?.message).toEqualTypeOf<string | undefined>();
   }
-
-  // @ts-expect-error status failures require the accepted statuses
-  new ClientError({ code: "status", method: "GET", status: 503, headers: {} });
+  if (error.code === "transport") {
+    expectTypeOf(error.status).toEqualTypeOf<number | undefined>();
+  }
+  if (error.code === "response") {
+    expectTypeOf(error.status).toEqualTypeOf<number>();
+    expectTypeOf(error.schema).toEqualTypeOf<"headers" | "body" | undefined>();
+  }
 });

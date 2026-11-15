@@ -1,141 +1,112 @@
-import type { ResponseHeaders, StandardIssue } from "./types.js";
+import type { StandardIssue } from "./types.js";
 
-export interface ErrorContext {
-  readonly method: string;
-  readonly url?: string | undefined;
-  readonly meta?: Readonly<Record<string, unknown>> | undefined;
-}
+type Meta = Readonly<Record<string, unknown>>;
 
-type SchemaFailure =
-  | { readonly reason: "issues"; readonly issues: readonly StandardIssue[] }
-  | { readonly reason: "exception" };
-
-type ResponseDiagnostics = {
-  readonly status: number;
-  readonly headers: ResponseHeaders;
-};
+type SchemaPart = "path" | "query" | "headers" | "body";
 
 /**
- * `request-input` covers an empty status list. `request-url` and
- * `request-prepare` cover URL construction and request preparation.
- * `transport` means the adapter failed to return a response.
+ * Narrow by `code` to read failure-specific fields.
  *
- * Schema failures identify the `field` and whether validation reported
- * `issues` or threw an exception. Response failures include the status
- * and raw headers. `status` adds the accepted statuses, `response-decode`
- * adds the body kind, and `response-cleanup` means only cleanup failed.
+ * @remarks
+ * `request` means nothing was sent: the call input, URL, body
+ * preparation, or a request schema failed. `transport` means the adapter
+ * failed to deliver or release a response. `status` means the status
+ * fell outside the accepted set. `response` means the response broke
+ * the contract: its body could not be decoded or a schema rejected it.
+ *
+ * `schema` names the schema that failed. It reported `issues` or threw
+ * `cause`.
+ *
+ * @example
+ * ```ts
+ * if (error instanceof ClientError && error.code === "status") {
+ *   console.log(error.meta.operationId, error.status);
+ * }
+ * ```
  */
-type Failure =
-  | { readonly code: "request-input" }
-  | { readonly code: "request-url" }
-  | { readonly code: "request-prepare" }
-  | ({
-      readonly code: "request-schema";
-      readonly field: "path" | "query" | "headers" | "body";
-    } & SchemaFailure)
-  | { readonly code: "transport" }
-  | (ResponseDiagnostics &
-      (
-        | { readonly code: "status"; readonly expectedStatuses: readonly number[] }
-        | { readonly code: "response-decode"; readonly kind: string }
-        | ({ readonly code: "response-schema"; readonly field: "headers" | "body" } & SchemaFailure)
-        | { readonly code: "response-cleanup" }
-      ));
-
-function errorMessage(failure: Failure) {
-  switch (failure.code) {
-    case "request-input":
-      return "Invalid call input";
-
-    case "request-url":
-      return "Request URL construction failed";
-
-    case "request-prepare":
-      return "Request preparation failed";
-
-    case "transport":
-      return "Transport failed to return a response";
-
-    case "response-cleanup":
-      return `Response cleanup failed (status ${failure.status})`;
-
-    case "status":
-      return `Unexpected status ${failure.status}; expected ${failure.expectedStatuses.join(", ")}`;
-
-    case "response-decode":
-      return `Cannot decode ${failure.kind} response (status ${failure.status})`;
-
-    case "request-schema":
-    case "response-schema": {
-      const origin = failure.code === "request-schema" ? "Request" : "Response";
-      const reason =
-        failure.reason === "issues"
-          ? `reported ${failure.issues.length} issue${failure.issues.length === 1 ? "" : "s"}`
-          : "threw";
-      const status = failure.code === "response-schema" ? ` (status ${failure.status})` : "";
-
-      return `${origin} ${failure.field} schema ${reason}${status}`;
-    }
-  }
-}
-
 export type ClientError = Error & {
   readonly method: string;
 
   /** Resolved request or response URL, when available. */
   readonly url: string | undefined;
 
-  /** Shares the endpoint metadata object and defaults to an empty object. */
-  readonly meta: Readonly<Record<string, unknown>>;
+  /** The endpoint's metadata object, passed by reference. */
+  readonly meta: Meta;
 
-  /** Cleanup failure retained without replacing the primary error. */
+  /** The underlying failure, when there is one. */
+  readonly cause: unknown;
+
+  /** Present only when cleanup failed as well as the primary failure. */
   cleanupError?: unknown;
-} & Failure;
+} & (
+    | {
+        readonly code: "request";
+        readonly status: undefined;
+        readonly schema: SchemaPart | undefined;
+        readonly issues: readonly StandardIssue[] | undefined;
+      }
+    | {
+        readonly code: "transport";
 
-type ClientErrorOptions = ErrorContext & Failure & { readonly cause?: unknown };
+        /** Set when a response arrived but could not be released. */
+        readonly status: number | undefined;
+        readonly schema: undefined;
+        readonly issues: undefined;
+      }
+    | {
+        readonly code: "status";
+        readonly status: number;
+        readonly schema: undefined;
+        readonly issues: undefined;
+      }
+    | {
+        readonly code: "response";
+        readonly status: number;
+
+        /** `undefined` when the body could not be decoded. */
+        readonly schema: "headers" | "body" | undefined;
+        readonly issues: readonly StandardIssue[] | undefined;
+      }
+  );
 
 class ClientErrorInstance extends Error {
+  declare readonly code: string;
   declare readonly method: string;
-  readonly url: string | undefined;
-  readonly meta: Readonly<Record<string, unknown>>;
+  declare readonly url: string | undefined;
+  declare readonly meta: Meta;
+  declare readonly status: number | undefined;
+  declare readonly schema: string | undefined;
+  declare readonly issues: readonly StandardIssue[] | undefined;
+  declare cleanupError?: unknown;
 
-  constructor(options: ClientErrorOptions) {
-    super(
-      errorMessage(options),
-      options.cause === undefined ? undefined : { cause: options.cause },
-    );
-
-    Object.assign(this, options);
-    this.name = "ClientError";
-    this.url = options.url;
-    this.meta = options.meta ?? {};
+  constructor(
+    code: ClientError["code"],
+    message: string,
+    method: string,
+    url: string | undefined,
+    meta: Meta,
+    status: number | undefined,
+    schema: SchemaPart | undefined,
+    issues: readonly StandardIssue[] | undefined,
+    cause: unknown,
+  ) {
+    super(message);
+    this.code = code;
+    this.method = method;
+    this.url = url;
+    this.meta = meta;
+    this.status = status;
+    this.schema = schema;
+    this.issues = issues;
+    this.cause = cause;
   }
 }
 
-/**
- * Narrow by `code` to read failure-specific fields.
- *
- * @remarks
- * `cause` holds the underlying failure and `cleanupError` holds a
- * secondary cleanup failure. Diagnostic fields such as `code` and
- * `meta` are enumerable. Read `message` and `cause` explicitly for JSON.
- *
- * @example
- * ```ts
- * if (error instanceof ClientError && error.code === "status") {
- *   console.log(error.status, error.expectedStatuses);
- * }
- * ```
- *
- * @example
- * ```ts
- * throw new ClientError({
- *   code: "transport", method: "GET", cause,
- * });
- * ```
- */
+ClientErrorInstance.prototype.name = "ClientError";
+
 export const ClientError = ClientErrorInstance as unknown as {
-  new (options: ClientErrorOptions): ClientError;
+  /** @internal */
+  new (...args: ConstructorParameters<typeof ClientErrorInstance>): ClientError;
 };
 
 export class RequestPreparationError extends Error {

@@ -225,7 +225,7 @@ async function responseDecoding() {
 
     check(error, {
       [`${path} JSON failure is classified`]: (value) =>
-        value instanceof ClientError && value.code === "response-decode",
+        value instanceof ClientError && value.code === "response" && value.schema === undefined,
     });
     check((await get({ discard: true })).body, {
       [`${path} JSON decoding can be discarded`]: (value) => value === undefined,

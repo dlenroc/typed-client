@@ -13,22 +13,22 @@ const rejected = schema(async () => {
 describe("request errors", () => {
   test.each(["path", "query", "headers", "body"] as const)(
     "reject %s schema issues before calling the transport",
-    async (field) => {
+    async (part) => {
       const { adapter } = mockTransport();
       const call = c.bind(
         c.endpoint("/users", {
           method: "POST",
-          [field]: invalid,
+          [part]: invalid,
           responses: { 200: "json" },
         }),
         adapter,
       );
 
       await expect(call()).rejects.toMatchObject({
-        code: "request-schema",
-        field,
-        reason: "issues",
+        code: "request",
+        schema: part,
         issues,
+        cause: undefined,
       });
       expect(adapter).not.toHaveBeenCalled();
     },
@@ -45,9 +45,9 @@ describe("request errors", () => {
     );
 
     await expect(call()).rejects.toMatchObject({
-      code: "request-schema",
-      field: "body",
-      reason: "exception",
+      code: "request",
+      schema: "body",
+      issues: undefined,
       cause,
     });
     expect(adapter).not.toHaveBeenCalled();
@@ -58,7 +58,11 @@ describe("request errors", () => {
     const get = c.bind(c.endpoint("/users"), adapter);
     const status: number[] = [];
 
-    await expect(get({ status })).rejects.toMatchObject({ code: "request-input" });
+    await expect(get({ status })).rejects.toMatchObject({
+      code: "request",
+      schema: undefined,
+      cause: expect.any(TypeError),
+    });
     expect(adapter).not.toHaveBeenCalled();
   });
 
@@ -69,7 +73,7 @@ describe("request errors", () => {
     // @ts-expect-error exercise the runtime check for untyped callers
     const result = get({ status: 200 });
 
-    await expect(result).rejects.toMatchObject({ code: "request-url" });
+    await expect(result).rejects.toMatchObject({ code: "request", schema: undefined });
     expect(adapter).not.toHaveBeenCalled();
   });
 
@@ -84,7 +88,8 @@ describe("request errors", () => {
     );
 
     await expect(get({ headers: { "bad\nname": "value" }, status: 200 })).rejects.toMatchObject({
-      code: "request-prepare",
+      code: "request",
+      schema: undefined,
       url: "https://api.test/v1/users",
     });
     expect(send).not.toHaveBeenCalled();
@@ -97,14 +102,12 @@ describe("request errors", () => {
       fetchTransport({ fetch: send }),
     );
 
-    await expect(post({ body: { id: 1n } })).rejects.toMatchObject({
-      code: "request-prepare",
-    });
+    await expect(post({ body: { id: 1n } })).rejects.toMatchObject({ code: "request" });
     expect(send).not.toHaveBeenCalled();
   });
 
   test("preserve the cause and effective request context when sending fails", async () => {
-    const upstream = new ClientError({ code: "transport", method: "GET" });
+    const upstream = new Error("connection reset");
     const meta = { operationId: "getUser" };
     const get = c.bind(
       c.endpoint("/users", { meta }),
@@ -119,6 +122,7 @@ describe("request errors", () => {
       method: "PATCH",
       url: "https://api.test/v1/users",
       meta,
+      status: undefined,
       cause: upstream,
     });
   });
@@ -126,21 +130,20 @@ describe("request errors", () => {
 
 describe("response errors", () => {
   test.each([
-    { field: "headers", kind: "none" },
-    { field: "body", kind: "json" },
-  ] as const)("handle $field schema failures at the right stage", async ({ field, kind }) => {
+    { part: "headers", kind: "none" },
+    { part: "body", kind: "json" },
+  ] as const)("handle $part schema failures at the right stage", async ({ part, kind }) => {
     const { adapter, response } = mockTransport();
     const get = c.bind(
       c.endpoint("/users", {
-        responses: { 200: { body: "json", [field]: invalid } },
+        responses: { 200: { body: "json", [part]: invalid } },
       }),
       adapter,
     );
 
     await expect(get()).rejects.toMatchObject({
-      code: "response-schema",
-      field,
-      reason: "issues",
+      code: "response",
+      schema: part,
       issues,
       status: 200,
     });
@@ -148,8 +151,8 @@ describe("response errors", () => {
   });
 
   test.each([
-    { status: 418, error: { code: "status", status: 418, expectedStatuses: [200] } },
-    { status: 200, error: { code: "response-schema", field: "headers", issues } },
+    { status: 418, error: { code: "status", status: 418, message: /418; expected 200/ } },
+    { status: 200, error: { code: "response", schema: "headers", issues } },
   ])("retain the primary failure when discarding HTTP $status fails", async ({ status, error }) => {
     const cleanupError = new Error("cannot discard");
     const { adapter, response } = mockTransport({
@@ -165,13 +168,17 @@ describe("response errors", () => {
       adapter,
     );
 
-    await expect(get()).rejects.toMatchObject({ ...error, cleanupError });
+    await expect(get()).rejects.toMatchObject({
+      ...error,
+      message: "message" in error ? expect.stringMatching(error.message) : expect.any(String),
+      cleanupError,
+    });
     expect(response.read).toHaveBeenCalledExactlyOnceWith("none");
   });
 
   test.each([
-    { kind: "json", error: { code: "response-decode", kind: "json" } },
-    { kind: "none", error: { code: "response-cleanup" } },
+    { kind: "json", error: { code: "response" } },
+    { kind: "none", error: { code: "transport" } },
   ] as const)("classify a failed $kind read without retrying", async ({ kind, error }) => {
     const { adapter, response } = mockTransport({
       read: () => {
@@ -184,32 +191,44 @@ describe("response errors", () => {
       ...error,
       cause,
       status: 200,
-      headers: {},
+      schema: undefined,
       url: response.url,
     });
     expect(response.read).toHaveBeenCalledExactlyOnceWith(kind);
   });
 });
 
-test("ClientError preserves structured diagnostics through JSON serialization", () => {
-  const diagnostics = {
-    code: "response-schema",
-    field: "body",
-    reason: "issues",
+test("ClientError preserves structured diagnostics through JSON serialization", async () => {
+  const meta = { operationId: "getUser" };
+  const { adapter } = mockTransport();
+  const get = c.bind(
+    c.endpoint("/users/7", { meta, responses: { 200: schema(() => ({ issues })) } }),
+    adapter,
+  );
+  const error: unknown = await get().catch((failure: unknown) => failure);
+
+  expect.assert(error instanceof ClientError);
+  expect(error).toBeInstanceOf(Error);
+  expect(error.meta).toBe(meta);
+  expect(error.message).toMatch(/body.*1 issue.*200/);
+  expect(error.stack).toMatch(/^ClientError: Response body/);
+  expect(Object.keys(error)).toEqual([
+    "code",
+    "method",
+    "url",
+    "meta",
+    "status",
+    "schema",
+    "issues",
+    "cause",
+  ]);
+  expect(JSON.parse(JSON.stringify(error))).toEqual({
+    code: "response",
+    schema: "body",
     issues,
     method: "GET",
-    url: "/users/7",
+    url: "https://api.test/users/7",
     status: 200,
-    headers: {},
-    meta: { operationId: "getUser" },
-  } as const;
-  const error = new ClientError({ ...diagnostics, cause });
-
-  expect(error).toBeInstanceOf(Error);
-  expect(error).toBeInstanceOf(ClientError);
-  expect(error.cause).toBe(cause);
-  expect(error.meta).toBe(diagnostics.meta);
-  expect(error.message).toMatch(/body.*1 issue.*200/);
-  expect(error.stack).toEqual(expect.any(String));
-  expect(JSON.parse(JSON.stringify(error))).toMatchObject({ name: "ClientError", ...diagnostics });
+    meta,
+  });
 });

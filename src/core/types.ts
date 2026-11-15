@@ -86,7 +86,7 @@ export type ResponseHeaders = {
 export interface RequestKindMap {
   readonly none: undefined;
 
-  /** Serialized with `JSON.stringify`. Failures raise `request-prepare`. */
+  /** Serialized with `JSON.stringify`. Failures raise a `request` error. */
   readonly json: unknown;
   readonly text: string;
   readonly binary: BinaryInput;

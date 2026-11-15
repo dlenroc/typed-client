@@ -186,7 +186,11 @@ describe.each(overHttp)("$name over HTTP", ({ create }) => {
   testHttp("discard malformed JSON without decoding it", async ({ transport }) => {
     const get = c.bind(c.endpoint("/bad", { responses: { 200: "json" } }), transport);
 
-    await expect(get()).rejects.toMatchObject({ code: "response-decode", kind: "json" });
+    await expect(get()).rejects.toMatchObject({
+      code: "response",
+      schema: undefined,
+      status: 200,
+    });
     await expect(get({ discard: true })).resolves.toMatchObject({ body: undefined });
   });
 });
@@ -340,8 +344,8 @@ describe("Fetch", () => {
 
     const result = get();
     await expect(result).rejects.toMatchObject({
-      code: "response-schema",
-      field: "body",
+      code: "response",
+      schema: "body",
       issues,
     });
     if (fails) {
@@ -403,8 +407,8 @@ describe("Playwright", () => {
 
   test.each([
     { stage: "setup", code: "transport", cause: "bad response headers" },
-    { stage: "decode", code: "response-decode", cause: Object.freeze(new Error("bad JSON")) },
-    { stage: "dispose", code: "response-cleanup", cause: undefined },
+    { stage: "decode", code: "response", cause: Object.freeze(new Error("bad JSON")) },
+    { stage: "dispose", code: "transport", cause: undefined },
   ])("classify $stage failures when disposal fails", async ({ stage, code, cause }) => {
     const cleanupError = new Error("dispose failed");
     const dispose = vi.fn<APIResponse["dispose"]>().mockRejectedValue(cleanupError);
