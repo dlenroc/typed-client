@@ -194,13 +194,14 @@ status-only endpoint, pass the status you expect.
 
 ## Call options and statuses
 
-Request fields, call controls, and transport options share one object.
+Request fields and call controls share one object. Options that belong to one
+runtime go under `transport`.
 
 ```ts
 await api.users.get({
   path: { id: 42 },
   status: 200,
-  signal: AbortSignal.timeout(5000),
+  timeout: 5000,
 });
 ```
 
@@ -209,6 +210,22 @@ await api.users.get({
 | `status`    | Accept one status or a nonempty array and narrow the result.               |
 | `unchecked` | Skip request schemas and allow `method`, `path`, and `bodyKind` overrides. |
 | `discard`   | Check status and headers, then discard the body before decoding.           |
+| `timeout`   | Milliseconds to wait. Defaults to the runtime's own timeout.               |
+| `follow`    | Follow redirects and return the final response. Defaults to `false`.       |
+| `transport` | Native options for the bound transport.                                    |
+
+The built-in transports provide `timeout`, `follow`, and `transport`.
+
+Without `follow`, declare the 3xx status or accept it with `status`. In a
+browser, Fetch reports an unfollowed redirect as status 0.
+
+`transport` accepts the native request options except the ones the client
+sets. A native redirect option overrides `follow`. On k6 a native `timeout`
+overrides `timeout`, and on Fetch a native `signal` is combined with it.
+
+```ts
+await api.users.get({ path: { id: 42 }, transport: { signal: controller.signal } });
+```
 
 Calls accept all declared statuses by default, including 4xx and 5xx.
 If there are no declared responses, pass `status` on each call. Accepted
@@ -350,7 +367,9 @@ await ping();
 ```
 
 Use the prepared request fields to send the request and `request.input` to
-read transport-specific options. Release buffered resources in `read()`,
+read transport-specific options. To support `timeout` and `follow`, add
+`CommonOptions` to the transport's options and apply them from
+`request.input`. Release buffered resources in `read()`,
 including when the client calls `read("none")` to skip decoding. Implement
 `discard()` if resources can remain live after `read()`, such as when it
 returns a stream. The client calls it when a status or schema check rejects

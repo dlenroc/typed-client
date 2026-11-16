@@ -63,6 +63,8 @@ export const testWithServer = test.extend("baseUrl", async ({}, { onCleanup }) =
 
     if (path === "/v1/bad") {
       response.end("{bad");
+    } else if (path === "/v1/redirect") {
+      response.writeHead(302, { location: "/v1/echo" }).end();
     } else if (path === "/v1/empty") {
       response.writeHead(204).end();
     } else if (path === "/v1/bytes") {

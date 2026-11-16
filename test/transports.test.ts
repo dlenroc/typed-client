@@ -2,6 +2,7 @@ import { describe, expect, onTestFinished, test, vi } from "vitest";
 import { request, type APIRequestContext, type APIResponse } from "playwright-core";
 import {
   c,
+  type CommonOptions,
   type RequestKindMap,
   type ResponseKindMap,
   type Transport,
@@ -22,7 +23,7 @@ const overHttp = [
   },
 ];
 
-type HttpTransport = Transport<RequestKindMap, ResponseKindMap, object, object>;
+type HttpTransport = Transport<RequestKindMap, ResponseKindMap, CommonOptions, object>;
 
 const method = "POST";
 const responses = { 200: c.type<Echo>() };
@@ -51,6 +52,22 @@ describe.each(overHttp)("$name over HTTP", ({ create }) => {
     const present = await echo.json({ body: null });
     expect(present.body.body).toBe("null");
     expect(present.body.headers["content-type"]).toBe("application/json");
+  });
+
+  testHttp("return a redirect unless asked to follow it", async ({ transport }) => {
+    const get = c.bind(
+      c.endpoint("/redirect", { responses: { 200: c.type<Echo>(), 302: "none" } }),
+      transport,
+    );
+
+    const direct = await get();
+    expect(direct.status).toBe(302);
+    expect(direct.headers.location).toBe("/v1/echo");
+
+    await expect(get({ follow: true })).resolves.toMatchObject({
+      status: 200,
+      body: { url: "/v1/echo" },
+    });
   });
 
   testHttp("send Unicode JSON and preserve separate response cookies", async ({ echo }) => {
@@ -233,6 +250,47 @@ describe("Fetch", () => {
     expect(defaults).toEqual({ accept: "application/json" });
   });
 
+  test("abort on the timeout or on the caller's signal, whichever comes first", async () => {
+    const send = vi.fn<typeof fetch>().mockImplementation(
+      (_url, init) =>
+        new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+        }),
+    );
+    const get = c.bind(
+      c.endpoint("/users", { responses: { 200: "json" } }),
+      fetchTransport({ baseUrl: "https://api.test", fetch: send }),
+    );
+
+    await expect(get({ timeout: 5 })).rejects.toMatchObject({
+      code: "transport",
+      cause: { name: "TimeoutError" },
+    });
+
+    const reason = new Error("stop");
+    const controller = new AbortController();
+    const aborted = get({ timeout: 60_000, transport: { signal: controller.signal } });
+    controller.abort(reason);
+    await expect(aborted).rejects.toMatchObject({ code: "transport", cause: reason });
+  });
+
+  test("ignore request fields placed under transport", async () => {
+    const send = vi
+      .fn<typeof fetch>()
+      .mockImplementation(async () => new Response(null, { status: 204 }));
+    const get = c.bind(
+      c.endpoint("/users", { responses: { 204: "none" } }),
+      fetchTransport({ baseUrl: "https://api.test", fetch: send }),
+    );
+
+    await get({ transport: { method: "POST", headers: { "x-a": "1" }, body: "x" } as object });
+
+    const init = send.mock.calls[0]?.[1];
+    expect(init).toMatchObject({ method: "GET" });
+    expect(init).not.toHaveProperty("headers");
+    expect(init).not.toHaveProperty("body");
+  });
+
   test("compare header names without case and keep the last value", async () => {
     const send = vi
       .fn<typeof fetch>()
@@ -407,11 +465,11 @@ describe("Playwright", () => {
       playwrightTransport({ context: { fetch: send } }),
     );
 
-    const result = await get({ body: input, timeout: 1234 });
+    const result = await get({ body: input, timeout: 1234, transport: { maxRetries: 2 } });
 
     expect(send).toHaveBeenCalledExactlyOnceWith(
       "/bytes",
-      expect.objectContaining({ timeout: 1234 }),
+      expect.objectContaining({ timeout: 1234, maxRedirects: 0, maxRetries: 2 }),
     );
     expect(send.mock.calls[0]?.[1]?.data).toBe(input);
     expect(result.body).toBe(output);

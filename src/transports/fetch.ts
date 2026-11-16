@@ -1,4 +1,5 @@
 import type {
+  CommonOptions,
   MultipartResponse,
   MultipartResponseValue,
   RequestKindMap,
@@ -24,21 +25,10 @@ interface FetchMetadata {
   readonly type: ResponseType;
 }
 
-const NATIVE_OPTION_KEYS = [
-  "cache",
-  "credentials",
-  "integrity",
-  "keepalive",
-  "mode",
-  "redirect",
-  "referrer",
-  "referrerPolicy",
-  "signal",
-  "priority",
-  "window",
-] as const;
-
-type FetchNativeOptions = Pick<RequestInit, (typeof NATIVE_OPTION_KEYS)[number]>;
+type FetchNativeOptions = CommonOptions & {
+  /** Passed to `fetch`. A `redirect` here overrides `follow`. */
+  readonly transport?: Omit<RequestInit, "method" | "headers" | "body">;
+};
 
 async function decodeFormData(form: FormData): Promise<MultipartResponse> {
   const target: Record<string, MultipartResponseValue | MultipartResponseValue[]> =
@@ -172,7 +162,7 @@ class FetchResponseHandle implements TransportResponse<FetchResponseKinds, Fetch
  *
  * @remarks
  * Leave the body absent for GET and HEAD. Pass native options such as
- * `signal` in the call object. This adapter also decodes `blob` and
+ * `signal` under `transport`. This adapter also decodes `blob` and
  * `stream` responses. Consume or cancel returned streams. A stream
  * schema must release its reader lock before it returns or throws.
  * If the schema replaces the stream, consume or cancel the original.
@@ -185,7 +175,7 @@ class FetchResponseHandle implements TransportResponse<FetchResponseKinds, Fetch
  *
  * const transport = fetchTransport({ baseUrl: "https://api.example.test" });
  * const health = c.bind(c.endpoint("/health"), transport);
- * await health({ status: 204, signal: AbortSignal.timeout(5000) });
+ * await health({ status: 204, timeout: 5000 });
  * ```
  *
  * @throws
@@ -213,7 +203,13 @@ export function fetchTransport(
 
     try {
       let body: BodyInit | undefined;
-      const options: RequestInit = { method: request.method };
+      const input = request.input;
+      const native = input?.transport;
+      const options: RequestInit = { ...native, method: request.method };
+      if (native !== undefined) {
+        delete options.headers;
+        delete options.body;
+      }
 
       if (request.body !== undefined) {
         switch (request.bodyKind) {
@@ -251,7 +247,7 @@ export function fetchTransport(
       const useMultipartBoundary =
         request.bodyKind === "multipart" &&
         body !== undefined &&
-        request.input?.unchecked !== true;
+        input?.unchecked !== true;
       if (headers !== undefined || body !== undefined) {
         let suppressContentType = false;
         const rawHeaders = prepareHeaders(
@@ -287,12 +283,14 @@ export function fetchTransport(
         options.body = body;
       }
 
-      for (let i = 0; i < NATIVE_OPTION_KEYS.length; i++) {
-        const key = NATIVE_OPTION_KEYS[i]!;
-        const value = request.input?.[key];
-        if (value !== undefined) {
-          (options as Record<string, unknown>)[key] = value;
-        }
+      if (options.redirect === undefined) {
+        options.redirect = input?.follow === true ? "follow" : "manual";
+      }
+
+      const timeout = input?.timeout;
+      if (timeout !== undefined) {
+        const limit = AbortSignal.timeout(timeout);
+        options.signal = options.signal ? AbortSignal.any([options.signal, limit]) : limit;
       }
 
       prepared = true;

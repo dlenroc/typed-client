@@ -179,6 +179,24 @@ async function multipartRequests() {
   });
 }
 
+async function redirects() {
+  const get = c.bind(
+    c.endpoint("/redirect", { responses: { 200: c.type<Echo>(), 302: "none" } }),
+    adapter,
+  );
+
+  check(await get(), {
+    "a redirect is returned by default": (value) =>
+      value.status === 302 && value.headers.location === "/v1/echo",
+  });
+  check(await get({ follow: true }), {
+    "follow returns the final response": (value) => value.status === 200,
+  });
+  check(await get({ transport: { redirects: 1 } }), {
+    "a native redirect count overrides the default": (value) => value.status === 200,
+  });
+}
+
 async function responseDecoding() {
   const multipart = c.bind(
     c.endpoint("/multipart-tokens", { responses: { 200: "multipart" } }),
@@ -238,6 +256,7 @@ export default async function () {
   await formRequests();
   await binaryRequests();
   await multipartRequests();
+  await redirects();
   await responseDecoding();
   completed.add(1);
 }

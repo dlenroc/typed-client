@@ -4,6 +4,7 @@ import { bind } from "./core/client.js";
 export { ClientError } from "./core/errors.js";
 export type { InferInput, InferResponse } from "./core/contract-types.js";
 export type {
+  CommonOptions,
   Transport,
   TransportRequest,
   TransportResponse,

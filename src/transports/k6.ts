@@ -3,6 +3,7 @@ import http from "k6/http";
 import { transportError } from "../core/errors.js";
 import type {
   BinaryInput,
+  CommonOptions,
   FieldScalar,
   Fields,
   MultipartFile,
@@ -34,18 +35,10 @@ interface K6ResponseMetadata {
 
 type K6Part = string | FileData | MultipartFile;
 
-const NATIVE_OPTION_KEYS = [
-  "cookies",
-  "timeout",
-  "redirects",
-  "auth",
-  "compression",
-  "tags",
-  "jar",
-  "responseCallback",
-] as const;
-
-type K6NativeOptions = Pick<Params, (typeof NATIVE_OPTION_KEYS)[number]>;
+type K6NativeOptions = CommonOptions & {
+  /** Passed to k6 as request params. `redirects` and `timeout` here override the call's. */
+  readonly transport?: Omit<Params, "headers" | "responseType">;
+};
 
 function toK6ArrayBuffer(data: BinaryInput) {
   if (data instanceof ArrayBuffer) {
@@ -332,7 +325,7 @@ class K6ResponseHandle implements TransportResponse<ResponseKindMap, K6ResponseM
  * const health = c.bind(c.endpoint("/health"), transport);
  *
  * export default async function () {
- *   await health({ status: 204, tags: { name: "health" } });
+ *   await health({ status: 204, transport: { tags: { name: "health" } } });
  * }
  * ```
  *
@@ -355,6 +348,7 @@ export function k6Transport(
     let prepared = false;
 
     try {
+      const input = request.input;
       let contentTypeSuppressed = false;
       const selectedHeaders =
         request.headers === undefined && request.body === undefined
@@ -406,7 +400,7 @@ export function k6Transport(
 
             if (selectedHeaders !== undefined && !contentTypeSuppressed) {
               const supplied = selectedHeaders["content-type"];
-              if (supplied === undefined || request.input?.unchecked !== true) {
+              if (supplied === undefined || input?.unchecked !== true) {
                 if (multipart.contentType !== undefined) {
                   selectedHeaders["content-type"] = multipart.contentType;
                 } else if (supplied !== undefined) {
@@ -436,20 +430,21 @@ export function k6Transport(
         }
       }
 
-      const params: Record<string, unknown> = { responseType };
-      if (selectedHeaders !== undefined) {
-        params.headers = selectedHeaders;
+      const native = input?.transport;
+      const params: Record<string, unknown> =
+        native === undefined ? { responseType } : { ...native, headers: undefined, responseType };
+
+      const timeout = input?.timeout;
+      if (timeout !== undefined && params.timeout === undefined) {
+        params.timeout = timeout;
       }
 
-      const input = request.input;
-      if (input != null) {
-        for (let i = 0; i < NATIVE_OPTION_KEYS.length; i++) {
-          const key = NATIVE_OPTION_KEYS[i]!;
-          const value = input[key];
-          if (value !== undefined) {
-            params[key] = value;
-          }
-        }
+      if (input?.follow !== true && (native === undefined || params.redirects === undefined)) {
+        params.redirects = 0;
+      }
+
+      if (selectedHeaders !== undefined) {
+        params.headers = selectedHeaders;
       }
 
       prepared = true;

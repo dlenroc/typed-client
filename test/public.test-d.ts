@@ -32,7 +32,7 @@ describe("bound calls", () => {
   );
 
   test("infer request fixtures and retain status and response metadata", async () => {
-    const input = { path: { id: 7 }, status: 200, cache: "no-store" } satisfies InferInput<typeof api.getUser>;
+    const input = { path: { id: 7 }, status: 200, transport: { cache: "no-store" } } satisfies InferInput<typeof api.getUser>;
 
     const result = await api.getUser(input);
 
@@ -46,7 +46,7 @@ describe("bound calls", () => {
     // @ts-expect-error unchecked calls have a different input shape
     ({ path: { id: 7 }, unchecked: true }) satisfies InferInput<typeof api.getUser>;
     // @ts-expect-error Fetch cache options are checked
-    await api.getUser({ path: { id: 7 }, cache: "bad" });
+    await api.getUser({ path: { id: 7 }, transport: { cache: "bad" } });
   });
 
   test("narrow bodies by declared and explicitly accepted statuses", async () => {
@@ -92,7 +92,7 @@ describe("bound calls", () => {
       body: "{bad",
       status: [200, 422],
       discard: true,
-      cache: "no-store",
+      transport: { cache: "no-store" },
     });
     expectTypeOf(malformed.status).toEqualTypeOf<200 | 422>();
     expectTypeOf(malformed.body).toEqualTypeOf<undefined>();

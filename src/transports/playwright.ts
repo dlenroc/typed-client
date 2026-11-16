@@ -2,6 +2,7 @@ import { Buffer } from "node:buffer";
 import type { APIRequestContext, APIResponse } from "playwright-core";
 import type {
   BinaryInput,
+  CommonOptions,
   RequestKindMap,
   ResponseKindMap,
   ResponseHeaders,
@@ -25,15 +26,13 @@ interface PlaywrightMetadata {
 
 type PlaywrightContext = Pick<APIRequestContext, "fetch">;
 type PlaywrightFetchOptions = NonNullable<Parameters<APIRequestContext["fetch"]>[1]>;
-const NATIVE_OPTION_KEYS = [
-  "timeout",
-  "maxRedirects",
-  "maxRetries",
-  "ignoreHTTPSErrors",
-  "signal",
-] as const;
-
-type PlaywrightNativeOptions = Pick<PlaywrightFetchOptions, (typeof NATIVE_OPTION_KEYS)[number]>;
+type PlaywrightNativeOptions = CommonOptions & {
+  /** Passed to `fetch`. A `maxRedirects` here overrides `follow`. */
+  readonly transport?: Pick<
+    PlaywrightFetchOptions,
+    "maxRedirects" | "maxRetries" | "ignoreHTTPSErrors" | "signal"
+  >;
+};
 
 async function disposeAfterFailure(response: APIResponse, cause: unknown): Promise<never> {
   try {
@@ -212,10 +211,20 @@ export function playwrightTransport(config: {
     let prepared = false;
 
     try {
+      const input = request.input;
+      const native = input?.transport;
       const options: PlaywrightFetchOptions = {
+        ...native,
         method: request.method,
         failOnStatusCode: false,
       };
+      if (native !== undefined) {
+        delete options.headers;
+        delete options.data;
+        delete options.form;
+        delete options.multipart;
+        delete options.params;
+      }
 
       const body = request.body;
       if (body !== undefined) {
@@ -263,7 +272,7 @@ export function playwrightTransport(config: {
           throw new TypeError("Playwright cannot suppress Content-Type for a request with a body");
         }
 
-        if (options.multipart !== undefined && request.input?.unchecked !== true) {
+        if (options.multipart !== undefined && input?.unchecked !== true) {
           delete preparedHeaders["content-type"];
         }
 
@@ -281,12 +290,12 @@ export function playwrightTransport(config: {
         options.headers = preparedHeaders;
       }
 
-      for (let i = 0; i < NATIVE_OPTION_KEYS.length; i++) {
-        const key = NATIVE_OPTION_KEYS[i]!;
-        const value = request.input?.[key];
-        if (value !== undefined) {
-          options[key] = value as never;
-        }
+      if (options.maxRedirects === undefined && input?.follow !== true) {
+        options.maxRedirects = 0;
+      }
+
+      if (input?.timeout !== undefined) {
+        options.timeout = input.timeout;
       }
 
       prepared = true;

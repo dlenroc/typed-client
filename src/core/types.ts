@@ -130,6 +130,24 @@ export interface CoreOptions<Status extends number = number> {
    * @defaultValue false
    */
   readonly discard?: boolean;
+
+}
+
+/** Options a transport supports by adding this type to its own. */
+export interface CommonOptions {
+  /**
+   * Milliseconds to wait for the response.
+   *
+   * @defaultValue The runtime's own timeout
+   */
+  readonly timeout?: number;
+
+  /**
+   * Follow redirects and return the final response.
+   *
+   * @defaultValue false
+   */
+  readonly follow?: boolean;
 }
 
 export interface RequestFields {
@@ -218,7 +236,8 @@ export interface TransportResponse<
  *
  * @remarks
  * Read transport options from `request.input` and expose metadata through
- * the handle's `transport` field. Before retrying a request, release the
+ * the handle's `transport` field. Add {@link CommonOptions} to the
+ * options to support `timeout` and `follow`. Before retrying a request, release the
  * previous response with `discard()` or `read("none")`. Release the
  * native response if handle creation fails.
  *
