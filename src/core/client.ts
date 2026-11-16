@@ -85,7 +85,8 @@ function selectResponseKinds(
 
   const kinds = new Set<string>();
 
-  for (const status of expectation) {
+  for (let i = 0; i < expectation.length; i++) {
+    const status = expectation[i]!;
     kinds.add(endpoint.responses[status]?.kind ?? "none");
   }
 
@@ -414,7 +415,9 @@ export function bind<const Contract extends EndpointTree, Adapter extends AnyTra
     const group: Record<string, unknown> = {};
     const entries = node as Record<string, unknown>;
 
-    for (const key of Object.keys(entries)) {
+    const keys = Object.keys(entries);
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i]!;
       group[key] = visit(entries[key]);
     }
 

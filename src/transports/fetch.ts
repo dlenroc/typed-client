@@ -287,7 +287,8 @@ export function fetchTransport(
         options.body = body;
       }
 
-      for (const key of NATIVE_OPTION_KEYS) {
+      for (let i = 0; i < NATIVE_OPTION_KEYS.length; i++) {
+        const key = NATIVE_OPTION_KEYS[i]!;
         const value = request.input?.[key];
         if (value !== undefined) {
           (options as Record<string, unknown>)[key] = value;

@@ -60,7 +60,9 @@ export function decodeUrlEncoded(text: string): UrlEncodedResponse {
     }
   } else {
     const raw = text.startsWith("?") ? text.slice(1) : text;
-    for (const pair of raw.split("&")) {
+    const pairs = raw.split("&");
+    for (let i = 0; i < pairs.length; i++) {
+      const pair = pairs[i]!;
       if (pair === "") {
         continue;
       }

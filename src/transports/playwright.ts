@@ -65,8 +65,10 @@ class PlaywrightResponseHandle implements TransportResponse<ResponseKindMap, Pla
   static async create(native: APIResponse) {
     try {
       const headers: Record<string, string | string[]> = Object.create(null);
-      for (const { name, value } of native.headersArray()) {
-        appendResponseHeader(headers, name, value);
+      const entries = native.headersArray();
+      for (let i = 0; i < entries.length; i++) {
+        const entry = entries[i]!;
+        appendResponseHeader(headers, entry.name, entry.value);
       }
 
       return new PlaywrightResponseHandle(native, headers);
@@ -279,7 +281,8 @@ export function playwrightTransport(config: {
         options.headers = preparedHeaders;
       }
 
-      for (const key of NATIVE_OPTION_KEYS) {
+      for (let i = 0; i < NATIVE_OPTION_KEYS.length; i++) {
+        const key = NATIVE_OPTION_KEYS[i]!;
         const value = request.input?.[key];
         if (value !== undefined) {
           options[key] = value as never;

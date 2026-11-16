@@ -122,7 +122,8 @@ function manualMultipart() {
     const encodedChunks: Uint8Array[] = [];
     let length = 0;
 
-    for (const chunk of chunks) {
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i]!;
       const bytes = typeof chunk === "string" ? encodeUtf8(chunk) : chunk;
       encodedChunks.push(bytes);
       length += bytes.byteLength;
@@ -131,7 +132,8 @@ function manualMultipart() {
     const encoded = new Uint8Array(length);
     let offset = 0;
 
-    for (const chunk of encodedChunks) {
+    for (let i = 0; i < encodedChunks.length; i++) {
+      const chunk = encodedChunks[i]!;
       encoded.set(chunk, offset);
       offset += chunk.length;
     }
@@ -166,7 +168,8 @@ function k6Multipart(
     // k6's native multipart object keeps only one value per name.
     if (manualEncoder === undefined && nativeParts[name] !== undefined) {
       manualEncoder = manualMultipart();
-      for (const priorName of fieldNames) {
+      for (let i = 0; i < fieldNames.length; i++) {
+        const priorName = fieldNames[i]!;
         manualEncoder.append(priorName, nativeParts[priorName]!);
       }
     }
@@ -182,7 +185,8 @@ function k6Multipart(
   // k6 encodes text-only objects as URL-encoded data.
   if (manualEncoder === undefined && !containsFile) {
     manualEncoder = manualMultipart();
-    for (const name of fieldNames) {
+    for (let i = 0; i < fieldNames.length; i++) {
+      const name = fieldNames[i]!;
       manualEncoder.append(name, nativeParts[name]!);
     }
   }
@@ -191,7 +195,8 @@ function k6Multipart(
     return manualEncoder.finish();
   }
 
-  for (const name of fieldNames) {
+  for (let i = 0; i < fieldNames.length; i++) {
+    const name = fieldNames[i]!;
     const part = nativeParts[name]!;
     if (
       typeof part === "object" &&
@@ -223,7 +228,8 @@ function normalizeHeaders(source: Record<string, string | readonly string[]>): R
       if (typeof value === "string") {
         combined.push(value);
       } else {
-        for (const part of value) {
+        for (let i = 0; i < value.length; i++) {
+          const part = value[i]!;
           combined.push(part);
         }
       }
@@ -417,7 +423,9 @@ export function k6Transport(
       }
 
       let responseType: "none" | "text" | "binary" = "none";
-      for (const kind of request.responseKinds) {
+      const kinds = request.responseKinds;
+      for (let i = 0; i < kinds.length; i++) {
+        const kind = kinds[i];
         if (kind === "binary" || kind === "multipart") {
           responseType = "binary";
           break;
@@ -433,9 +441,11 @@ export function k6Transport(
         params.headers = selectedHeaders;
       }
 
-      if (request.input != null) {
-        for (const key of NATIVE_OPTION_KEYS) {
-          const value = request.input[key];
+      const input = request.input;
+      if (input != null) {
+        for (let i = 0; i < NATIVE_OPTION_KEYS.length; i++) {
+          const key = NATIVE_OPTION_KEYS[i]!;
+          const value = input[key];
           if (value !== undefined) {
             params[key] = value;
           }
