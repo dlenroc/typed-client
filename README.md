@@ -139,10 +139,10 @@ range. Fetch and Playwright accept `FormData` as the body. k6 accepts
 
 Headers accept records.
 
-Header names are case-insensitive. `undefined` allows a default value, `null`
-suppresses the header and its default, and `""` sends an empty value. Use one
-value per request header with Playwright and k6. With Playwright, leave
-Content-Type enabled on requests with a body.
+Header names are case-insensitive, and the last one wins. `undefined` allows a
+default value, `null` suppresses the header and its default, and `""` sends an
+empty value. With Playwright, leave Content-Type enabled on requests with a
+body.
 
 Checked multipart calls use the encoder's boundary. Use `unchecked: true`
 to send a custom Content-Type in a negative test.

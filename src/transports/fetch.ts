@@ -10,7 +10,7 @@ import type {
 import { asSearchParams } from "../shared/fields.js";
 import { RequestPreparationError, TransportFailure } from "../core/errors.js";
 import { asFormData, binaryView, encodeJson } from "./body.js";
-import { prepareHeaders, appendResponseHeader, defaultContentType } from "./headers.js";
+import { prepareHeaders, appendResponseHeader } from "./headers.js";
 import { createUrlResolver } from "../shared/url.js";
 import { decodeUrlEncoded, encodeUtf8 } from "./codec.js";
 
@@ -254,20 +254,7 @@ export function fetchTransport(
           request.bodyKind === "multipart" &&
           body !== undefined &&
           request.input?.unchecked !== true;
-        if (headers instanceof Headers) {
-          options.headers = headers;
-          const contentType = body === undefined ? undefined : defaultContentType(request.bodyKind);
-
-          if (useMultipartBoundary && headers.has("content-type")) {
-            const preparedHeaders = new Headers(headers);
-            preparedHeaders.delete("content-type");
-            options.headers = preparedHeaders;
-          } else if (contentType !== undefined && !headers.has("content-type")) {
-            const preparedHeaders = new Headers(headers);
-            preparedHeaders.set("content-type", contentType);
-            options.headers = preparedHeaders;
-          }
-        } else if (headers !== undefined || body !== undefined) {
+        if (headers !== undefined || body !== undefined) {
           let suppressContentType = false;
           const rawHeaders = prepareHeaders(
             headers,
@@ -300,14 +287,7 @@ export function fetchTransport(
 
           const preparedHeaders = new Headers();
           for (const key in rawHeaders) {
-            const value = rawHeaders[key]!;
-            if (typeof value === "string") {
-              preparedHeaders.append(key, value);
-            } else {
-              for (const part of value) {
-                preparedHeaders.append(key, part);
-              }
-            }
+            preparedHeaders.append(key, rawHeaders[key]!);
           }
           options.headers = preparedHeaders;
         }

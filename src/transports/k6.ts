@@ -315,8 +315,7 @@ class K6ResponseHandle implements TransportResponse<ResponseKindMap, K6ResponseM
  *
  * @remarks
  * Use k6 2.2 or later and add `@types/k6` for TypeScript. Bundle npm
- * imports for k6. Multipart fields accept `http.file()` values. Use a
- * single value per request header.
+ * imports for k6. Multipart fields accept `http.file()` values.
  *
  * @example
  * ```ts
@@ -424,16 +423,6 @@ export function k6Transport(
         }
 
         throw new RequestPreparationError("Failed to prepare k6 request", { cause });
-      }
-
-      if (selectedHeaders !== undefined) {
-        for (const name in selectedHeaders) {
-          if (typeof selectedHeaders[name] !== "string") {
-            throw new RequestPreparationError(
-              `k6 cannot preserve repeated request header: ${name}`,
-            );
-          }
-        }
       }
 
       let responseType: "none" | "text" | "binary" = "none";

@@ -35,8 +35,8 @@ export type Fields<Value> = Readonly<Record<string, Value | readonly Value[]>> |
 export type QueryInput = string | Fields<FieldScalar>;
 
 /**
- * Header names are case-insensitive. `undefined` allows a default,
- * `null` suppresses it, and `""` sends an empty value.
+ * Header names are case-insensitive and the last one wins. `undefined`
+ * allows a default, `null` suppresses it, and `""` sends an empty value.
  */
 export type HeaderInput = Readonly<Record<string, FieldScalar>>;
 

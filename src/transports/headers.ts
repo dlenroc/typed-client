@@ -1,5 +1,4 @@
-import type { FieldScalar, HeaderInput } from "../core/types.js";
-import { forEachField } from "../shared/fields.js";
+import type { HeaderInput } from "../core/types.js";
 
 export function defaultContentType(bodyKind: string) {
   switch (bodyKind) {
@@ -17,55 +16,27 @@ export function prepareHeaders(
   bodyKind: string,
   bodyPresent: boolean,
   contentTypeSuppressed: (suppressed: boolean) => void,
-): Record<string, string | string[]> {
-  const result: Record<string, string | string[]> = Object.create(null);
+): Record<string, string> {
+  const result: Record<string, string> = Object.create(null);
   let suppressedContentType = false;
 
   if (headers !== undefined) {
-    function append(name: string, value: FieldScalar) {
+    for (const name in headers) {
+      const value = headers[name];
       if (value === undefined) {
-        return;
+        continue;
       }
 
+      const key = name.toLowerCase();
       if (value === null) {
-        delete result[name];
-
-        if (name === "content-type") {
-          suppressedContentType = true;
-        }
-
-        return;
-      }
-
-      if (name === "content-type") {
-        suppressedContentType = false;
-      }
-
-      const text = String(value);
-      const previous = result[name];
-
-      if (previous === undefined) {
-        result[name] = text;
-      } else if (typeof previous === "string") {
-        result[name] = [previous, text];
+        delete result[key];
       } else {
-        previous.push(text);
+        result[key] = String(value);
       }
-    }
 
-    if (typeof Headers !== "undefined" && headers instanceof Headers) {
-      headers.forEach((value, name) => append(name, value));
-    } else {
-      forEachField(headers as Exclude<HeaderInput, Headers>, (name, value) => {
-        const key = name.toLowerCase();
-        if (Array.isArray(value)) {
-          for (const item of value) {
-            append(key, item);
-          }
-        } else {
-          append(key, value as FieldScalar);
-        }
-      });
+      if (key === "content-type") {
+        suppressedContentType = value === null;
+      }
     }
   }
 

@@ -233,6 +233,25 @@ describe("Fetch", () => {
     expect(defaults).toEqual({ accept: "application/json" });
   });
 
+  test("compare header names without case and keep the last value", async () => {
+    const send = vi
+      .fn<typeof fetch>()
+      .mockImplementation(async () => new Response(null, { status: 204 }));
+    const get = c.bind(
+      c.endpoint("/users", { responses: { 204: "none" } }),
+      fetchTransport({ baseUrl: "https://api.test", fetch: send }),
+    );
+
+    await get({
+      headers: { authorization: "default", "x-skip": undefined, Authorization: "caller", "x-n": 3 },
+    });
+
+    expect([...new Headers(send.mock.calls[0]?.[1]?.headers)]).toEqual([
+      ["authorization", "caller"],
+      ["x-n", "3"],
+    ]);
+  });
+
   testWithServer("suppress Content-Type for text, form, and multipart", async ({ baseUrl }) => {
     const adapter = fetchTransport({ baseUrl });
     const headers = { "content-type": null };

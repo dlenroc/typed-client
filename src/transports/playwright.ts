@@ -173,8 +173,8 @@ function playwrightMultipart(
  *
  * @remarks
  * Use Playwright 1.62 or later. Pass the test's `request` fixture or
- * create one with `request.newContext()`. Use a single value per
- * request header and keep Content-Type enabled when sending a body.
+ * create one with `request.newContext()`. Keep Content-Type enabled
+ * when sending a body.
  *
  * @example
  * ```ts
@@ -277,14 +277,6 @@ export function playwrightTransport(config: {
           delete preparedHeaders["content-type"];
         }
 
-        for (const name in preparedHeaders) {
-          if (typeof preparedHeaders[name] !== "string") {
-            throw new RequestPreparationError(
-              `Playwright cannot preserve repeated request header: ${name}`,
-            );
-          }
-        }
-
         const contentType = preparedHeaders["content-type"];
         if (
           request.bodyKind !== "json" &&
@@ -296,7 +288,7 @@ export function playwrightTransport(config: {
           options.data = Buffer.from(options.data);
         }
 
-        options.headers = preparedHeaders as Record<string, string>;
+        options.headers = preparedHeaders;
       }
 
       for (const key of NATIVE_OPTION_KEYS) {
