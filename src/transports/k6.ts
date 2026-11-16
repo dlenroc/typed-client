@@ -1,6 +1,6 @@
 import type { FileData, Params, RequestBody, Response } from "k6/http";
 import http from "k6/http";
-import { RequestPreparationError, TransportFailure } from "../core/errors.js";
+import { transportError } from "../core/errors.js";
 import type {
   BinaryInput,
   FieldScalar,
@@ -346,6 +346,7 @@ export function k6Transport(
 
   return async (request) => {
     const url = resolveUrl(request.url);
+    let prepared = false;
 
     try {
       let contentTypeSuppressed = false;
@@ -363,66 +364,56 @@ export function k6Transport(
 
       let body: RequestBody | null = null;
 
-      try {
-        if (request.body !== undefined) {
-          switch (request.bodyKind) {
-            case "none":
-              throw new RequestPreparationError("none request body kind cannot have a body");
+      if (request.body !== undefined) {
+        switch (request.bodyKind) {
+          case "none":
+            throw new TypeError("none request body kind cannot have a body");
 
-            case "json":
-              body = encodeJson(request.body);
-              break;
+          case "json":
+            body = encodeJson(request.body);
+            break;
 
-            case "text":
-              body = request.body as string;
-              break;
+          case "text":
+            body = request.body as string;
+            break;
 
-            case "binary":
-              // k6 accepts byte views even though RequestBody omits them.
-              body = (
-                request.body instanceof ArrayBuffer
-                  ? request.body
-                  : binaryView(request.body as BinaryInput)
-              ) as RequestBody;
-              break;
+          case "binary":
+            // k6 accepts byte views even though RequestBody omits them.
+            body = (
+              request.body instanceof ArrayBuffer
+                ? request.body
+                : binaryView(request.body as BinaryInput)
+            ) as RequestBody;
+            break;
 
-            case "urlencoded":
-              body = encodeFields(request.body as RequestKindMap["urlencoded"]);
-              break;
+          case "urlencoded":
+            body = encodeFields(request.body as RequestKindMap["urlencoded"]);
+            break;
 
-            case "multipart": {
-              const multipart = k6Multipart(
-                request.body as K6RequestKinds["multipart"],
-                httpApi,
-                contentTypeSuppressed,
-              );
-              body = multipart.body as RequestBody;
+          case "multipart": {
+            const multipart = k6Multipart(
+              request.body as K6RequestKinds["multipart"],
+              httpApi,
+              contentTypeSuppressed,
+            );
+            body = multipart.body as RequestBody;
 
-              if (selectedHeaders !== undefined && !contentTypeSuppressed) {
-                const supplied = selectedHeaders["content-type"];
-                if (supplied === undefined || request.input?.unchecked !== true) {
-                  if (multipart.contentType !== undefined) {
-                    selectedHeaders["content-type"] = multipart.contentType;
-                  } else if (supplied !== undefined) {
-                    delete selectedHeaders["content-type"];
-                  }
+            if (selectedHeaders !== undefined && !contentTypeSuppressed) {
+              const supplied = selectedHeaders["content-type"];
+              if (supplied === undefined || request.input?.unchecked !== true) {
+                if (multipart.contentType !== undefined) {
+                  selectedHeaders["content-type"] = multipart.contentType;
+                } else if (supplied !== undefined) {
+                  delete selectedHeaders["content-type"];
                 }
               }
-              break;
             }
-
-            default:
-              throw new RequestPreparationError(
-                `Unsupported k6 body kind: ${String(request.bodyKind)}`,
-              );
+            break;
           }
-        }
-      } catch (cause) {
-        if (cause instanceof RequestPreparationError) {
-          throw cause;
-        }
 
-        throw new RequestPreparationError("Failed to prepare k6 request", { cause });
+          default:
+            throw new TypeError(`Unsupported k6 body kind: ${String(request.bodyKind)}`);
+        }
       }
 
       let responseType: "none" | "text" | "binary" = "none";
@@ -451,10 +442,11 @@ export function k6Transport(
         }
       }
 
+      prepared = true;
       const response = await httpApi.asyncRequest(request.method, url, body, params as Params);
       return new K6ResponseHandle(response);
-    } catch (cause) {
-      throw new TransportFailure(url, cause);
+    } catch (failure) {
+      throw transportError(prepared, request.method, url, request.meta, failure);
     }
   };
 }

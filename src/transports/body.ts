@@ -1,11 +1,10 @@
 import type { BinaryInput, MultipartInput } from "../core/types.js";
-import { RequestPreparationError } from "../core/errors.js";
 import { forEachField } from "../shared/fields.js";
 
 export function encodeJson(body: unknown) {
   const encoded = JSON.stringify(body);
   if (encoded === undefined) {
-    throw new RequestPreparationError("JSON body cannot be serialized");
+    throw new TypeError("JSON body cannot be serialized");
   }
 
   return encoded;

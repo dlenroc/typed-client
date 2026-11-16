@@ -109,13 +109,6 @@ export const ClientError = ClientErrorInstance as unknown as {
   new (...args: ConstructorParameters<typeof ClientErrorInstance>): ClientError;
 };
 
-export class RequestPreparationError extends Error {
-  constructor(message: string, options?: ErrorOptions) {
-    super(message, options);
-    this.name = "RequestPreparationError";
-  }
-}
-
 export class ResponseCleanupError extends Error {
   constructor(cause: unknown) {
     super("Failed to release transport response resources", { cause });
@@ -133,11 +126,37 @@ export class FailureWithCleanupError extends Error {
   }
 }
 
-export class TransportFailure extends Error {
-  constructor(
-    readonly url: string,
-    cause: unknown,
+export function preserveCleanupError(error: ClientError, failure: unknown) {
+  if (
+    failure !== null &&
+    (typeof failure === "object" || typeof failure === "function") &&
+    "cleanupError" in failure
   ) {
-    super("Transport request failed", { cause });
+    error.cleanupError = failure.cleanupError;
   }
+
+  return error;
+}
+
+export function transportError(
+  prepared: boolean,
+  method: string,
+  url: string,
+  meta: Meta,
+  failure: unknown,
+): ClientError {
+  return preserveCleanupError(
+    new ClientError(
+      prepared ? "transport" : "request",
+      prepared ? "Transport failed to return a response" : "Request preparation failed",
+      method,
+      url,
+      meta,
+      undefined,
+      undefined,
+      undefined,
+      failure instanceof FailureWithCleanupError ? failure.cause : failure,
+    ),
+    failure,
+  );
 }

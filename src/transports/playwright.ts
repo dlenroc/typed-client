@@ -10,10 +10,9 @@ import type {
 } from "../core/types.js";
 import { encodeFields } from "../shared/fields.js";
 import {
-  RequestPreparationError,
   ResponseCleanupError,
   FailureWithCleanupError,
-  TransportFailure,
+  transportError,
 } from "../core/errors.js";
 import { asFormData, encodeJson } from "./body.js";
 import { prepareHeaders, appendResponseHeader } from "./headers.js";
@@ -208,6 +207,7 @@ export function playwrightTransport(config: {
 
   return async (request) => {
     const url = resolveUrl(request.url);
+    let prepared = false;
 
     try {
       const options: PlaywrightFetchOptions = {
@@ -215,45 +215,35 @@ export function playwrightTransport(config: {
         failOnStatusCode: false,
       };
 
-      try {
-        const body = request.body;
-        if (body !== undefined) {
-          switch (request.bodyKind) {
-            case "none":
-              throw new RequestPreparationError("none request body kind cannot have a body");
+      const body = request.body;
+      if (body !== undefined) {
+        switch (request.bodyKind) {
+          case "none":
+            throw new TypeError("none request body kind cannot have a body");
 
-            case "json":
-              options.data = encodeJson(body);
-              break;
+          case "json":
+            options.data = encodeJson(body);
+            break;
 
-            case "text":
-              options.data = body as string;
-              break;
+          case "text":
+            options.data = body as string;
+            break;
 
-            case "binary":
-              options.data = asBuffer(body as BinaryInput);
-              break;
+          case "binary":
+            options.data = asBuffer(body as BinaryInput);
+            break;
 
-            case "urlencoded":
-              options.data = encodeFields(body as RequestKindMap["urlencoded"]);
-              break;
+          case "urlencoded":
+            options.data = encodeFields(body as RequestKindMap["urlencoded"]);
+            break;
 
-            case "multipart":
-              options.multipart = playwrightMultipart(body as RequestKindMap["multipart"]);
-              break;
+          case "multipart":
+            options.multipart = playwrightMultipart(body as RequestKindMap["multipart"]);
+            break;
 
-            default:
-              throw new RequestPreparationError(
-                `Unsupported Playwright body kind: ${String(request.bodyKind)}`,
-              );
-          }
+          default:
+            throw new TypeError(`Unsupported Playwright body kind: ${String(request.bodyKind)}`);
         }
-      } catch (cause) {
-        if (cause instanceof RequestPreparationError) {
-          throw cause;
-        }
-
-        throw new RequestPreparationError("Failed to serialize Playwright request", { cause });
       }
 
       if (request.headers !== undefined || request.body !== undefined) {
@@ -268,9 +258,7 @@ export function playwrightTransport(config: {
         );
 
         if (suppressContentType && request.body !== undefined) {
-          throw new RequestPreparationError(
-            "Playwright cannot suppress Content-Type for a request with a body",
-          );
+          throw new TypeError("Playwright cannot suppress Content-Type for a request with a body");
         }
 
         if (options.multipart !== undefined && request.input?.unchecked !== true) {
@@ -298,10 +286,11 @@ export function playwrightTransport(config: {
         }
       }
 
+      prepared = true;
       const response = await config.context.fetch(url, options);
       return await PlaywrightResponseHandle.create(response);
-    } catch (cause) {
-      throw new TransportFailure(url, cause);
+    } catch (failure) {
+      throw transportError(prepared, request.method, url, request.meta, failure);
     }
   };
 }

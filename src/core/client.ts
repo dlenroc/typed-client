@@ -4,9 +4,9 @@ import { renderPath } from "./endpoint.js";
 import {
   ClientError,
   FailureWithCleanupError,
-  RequestPreparationError,
   ResponseCleanupError,
-  TransportFailure,
+  preserveCleanupError,
+  transportError,
 } from "./errors.js";
 import type {
   AnyTransport,
@@ -20,7 +20,6 @@ import type {
 } from "./types.js";
 
 const ONLY_NONE = ["none"] as const;
-const NO_RESPONSE = "Transport failed to return a response";
 
 type Meta = Endpoint["meta"];
 
@@ -109,18 +108,6 @@ async function rejectResponse(
   }
 
   throw primary;
-}
-
-function preserveCleanupError(error: ClientError, failure: unknown) {
-  if (
-    failure !== null &&
-    (typeof failure === "object" || typeof failure === "function") &&
-    "cleanupError" in failure
-  ) {
-    error.cleanupError = failure.cleanupError;
-  }
-
-  return error;
 }
 
 async function invoke(
@@ -258,7 +245,7 @@ async function invoke(
     bodyKind: bodyKind as TransportRequest["bodyKind"],
     body: body as TransportRequest["body"],
     responseKinds: responseKinds as TransportRequest["responseKinds"],
-    meta: endpoint.meta,
+    meta,
     input,
   };
 
@@ -266,23 +253,12 @@ async function invoke(
   try {
     handle = await transport(transportRequest);
   } catch (failure) {
-    const failedUrl = failure instanceof TransportFailure ? failure.url : transportRequest.url;
-    const attempt = failure instanceof TransportFailure ? failure.cause : failure;
-    const cause = attempt instanceof FailureWithCleanupError ? attempt.cause : attempt;
-    const prepared = !(cause instanceof RequestPreparationError);
-    const wrapped = new ClientError(
-      prepared ? "transport" : "request",
-      prepared ? NO_RESPONSE : "Request preparation failed",
-      method,
-      failedUrl,
-      meta,
-      undefined,
-      undefined,
-      undefined,
-      cause,
-    );
+    // A transport raises this call's own error with the endpoint's metadata.
+    if (failure instanceof ClientError && failure.meta === meta) {
+      throw failure;
+    }
 
-    throw preserveCleanupError(wrapped, attempt);
+    throw transportError(true, method, transportRequest.url, meta, failure);
   }
 
   const responseUrl = handle.url;

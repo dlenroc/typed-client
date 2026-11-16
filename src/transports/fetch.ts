@@ -8,7 +8,7 @@ import type {
   TransportResponse,
 } from "../core/types.js";
 import { asSearchParams } from "../shared/fields.js";
-import { RequestPreparationError, TransportFailure } from "../core/errors.js";
+import { transportError } from "../core/errors.js";
 import { asFormData, binaryView, encodeJson } from "./body.js";
 import { prepareHeaders, appendResponseHeader } from "./headers.js";
 import { createUrlResolver } from "../shared/url.js";
@@ -209,111 +209,96 @@ export function fetchTransport(
 
   return async (request) => {
     const url = resolveUrl(request.url);
+    let prepared = false;
 
     try {
       let body: BodyInit | undefined;
       const options: RequestInit = { method: request.method };
 
-      try {
-        if (request.body !== undefined) {
-          switch (request.bodyKind) {
-            case "none":
-              throw new RequestPreparationError("none request body kind cannot have a body");
+      if (request.body !== undefined) {
+        switch (request.bodyKind) {
+          case "none":
+            throw new TypeError("none request body kind cannot have a body");
 
-            case "json":
-              body = encodeJson(request.body);
-              break;
+          case "json":
+            body = encodeJson(request.body);
+            break;
 
-            case "text":
-              body = request.body as string;
-              break;
+          case "text":
+            body = request.body as string;
+            break;
 
-            case "binary":
-              body = binaryView(request.body as RequestKindMap["binary"]) as BodyInit;
-              break;
+          case "binary":
+            body = binaryView(request.body as RequestKindMap["binary"]) as BodyInit;
+            break;
 
-            case "urlencoded": {
-              const fields = request.body as RequestKindMap["urlencoded"];
-              body = typeof fields === "string" ? fields : asSearchParams(fields);
-              break;
-            }
-
-            case "multipart":
-              body = asFormData(request.body as RequestKindMap["multipart"]);
-              break;
-
-            default:
-              throw new RequestPreparationError(
-                `Unsupported Fetch request body kind: ${String(request.bodyKind)}`,
-              );
-          }
-        }
-
-        const headers = request.headers;
-        const useMultipartBoundary =
-          request.bodyKind === "multipart" &&
-          body !== undefined &&
-          request.input?.unchecked !== true;
-        if (headers !== undefined || body !== undefined) {
-          let suppressContentType = false;
-          const rawHeaders = prepareHeaders(
-            headers,
-            request.bodyKind,
-            body !== undefined,
-            (suppressed) => {
-              suppressContentType = suppressed;
-            },
-          );
-
-          if (useMultipartBoundary) {
-            delete rawHeaders["content-type"];
+          case "urlencoded": {
+            const fields = request.body as RequestKindMap["urlencoded"];
+            body = typeof fields === "string" ? fields : asSearchParams(fields);
+            break;
           }
 
-          if (suppressContentType) {
-            // Fetch leaves Content-Type unset for byte bodies.
-            if (typeof body === "string" || body instanceof URLSearchParams) {
-              body = encodeUtf8(body.toString()) as BodyInit;
-            } else if (body instanceof FormData) {
-              try {
-                body = await new Response(body).arrayBuffer();
-              } catch (cause) {
-                throw new RequestPreparationError(
-                  "Failed to encode multipart body without Content-Type",
-                  { cause },
-                );
-              }
-            }
-          }
+          case "multipart":
+            body = asFormData(request.body as RequestKindMap["multipart"]);
+            break;
 
-          const preparedHeaders = new Headers();
-          for (const key in rawHeaders) {
-            preparedHeaders.append(key, rawHeaders[key]!);
-          }
-          options.headers = preparedHeaders;
+          default:
+            throw new TypeError(`Unsupported Fetch request body kind: ${String(request.bodyKind)}`);
         }
-
-        if (body !== undefined) {
-          options.body = body;
-        }
-
-        for (const key of NATIVE_OPTION_KEYS) {
-          const value = request.input?.[key];
-          if (value !== undefined) {
-            (options as Record<string, unknown>)[key] = value;
-          }
-        }
-      } catch (cause) {
-        if (cause instanceof RequestPreparationError) {
-          throw cause;
-        }
-
-        throw new RequestPreparationError("Failed to prepare Fetch request", { cause });
       }
 
+      const headers = request.headers;
+      const useMultipartBoundary =
+        request.bodyKind === "multipart" &&
+        body !== undefined &&
+        request.input?.unchecked !== true;
+      if (headers !== undefined || body !== undefined) {
+        let suppressContentType = false;
+        const rawHeaders = prepareHeaders(
+          headers,
+          request.bodyKind,
+          body !== undefined,
+          (suppressed) => {
+            suppressContentType = suppressed;
+          },
+        );
+
+        if (useMultipartBoundary) {
+          delete rawHeaders["content-type"];
+        }
+
+        if (suppressContentType) {
+          // Fetch leaves Content-Type unset for byte bodies.
+          if (typeof body === "string" || body instanceof URLSearchParams) {
+            body = encodeUtf8(body.toString()) as BodyInit;
+          } else if (body instanceof FormData) {
+            body = await new Response(body).arrayBuffer();
+          }
+        }
+
+        const preparedHeaders = new Headers();
+        for (const key in rawHeaders) {
+          preparedHeaders.append(key, rawHeaders[key]!);
+        }
+        options.headers = preparedHeaders;
+      }
+
+      if (body !== undefined) {
+        options.body = body;
+      }
+
+      for (const key of NATIVE_OPTION_KEYS) {
+        const value = request.input?.[key];
+        if (value !== undefined) {
+          (options as Record<string, unknown>)[key] = value;
+        }
+      }
+
+      prepared = true;
       const response = await fetch(url, options);
       return new FetchResponseHandle(response);
-    } catch (cause) {
-      throw new TransportFailure(url, cause);
+    } catch (failure) {
+      throw transportError(prepared, request.method, url, request.meta, failure);
     }
   };
 }
