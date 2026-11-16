@@ -32,15 +32,13 @@ export type Fields<Value> = Readonly<Record<string, Value | readonly Value[]>> |
  * Strings are already encoded. Repeat pairs or use arrays in records.
  * Omit a field with `undefined` or send an empty value with `null`.
  */
-export type QueryInput = string | URLSearchParams | Fields<FieldScalar>;
-
-export type HeaderValue = FieldScalar | readonly FieldScalar[];
+export type QueryInput = string | Fields<FieldScalar>;
 
 /**
  * Header names are case-insensitive. `undefined` allows a default,
  * `null` suppresses it, and `""` sends an empty value.
  */
-export type HeaderInput = Headers | Readonly<Record<string, HeaderValue>> | PairInput<HeaderValue>;
+export type HeaderInput = Readonly<Record<string, FieldScalar>>;
 
 /** A view sends only its selected byte range. */
 export type BinaryInput = ArrayBuffer | ArrayBufferView;

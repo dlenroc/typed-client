@@ -56,7 +56,7 @@ describe.each(overHttp)("$name over HTTP", ({ create }) => {
   testHttp("send Unicode JSON and preserve separate response cookies", async ({ echo }) => {
     const result = await echo.json({
       body: { name: "café" },
-      headers: new Headers({ "x-team": "identity" }),
+      headers: { "x-team": "identity" },
     });
 
     expect(result.body).toMatchObject({
@@ -87,10 +87,6 @@ describe.each(overHttp)("$name over HTTP", ({ create }) => {
     });
     await expect(echo.form({ body: "already=encoded+input" })).resolves.toMatchObject({
       body: { body: "already=encoded+input" },
-    });
-    const params = new URLSearchParams("tag=one&tag=two");
-    await expect(echo.form({ body: params })).resolves.toMatchObject({
-      body: { body: "tag=one&tag=two" },
     });
   });
 
@@ -136,13 +132,13 @@ describe.each(overHttp)("$name over HTTP", ({ create }) => {
 
   testHttp("use the encoder's boundary for multipart headers", async ({ echo }) => {
     const body = { tag: "one" };
-    const headers = new Headers({ "content-type": "multipart/form-data; boundary=caller" });
+    const headers = { "content-type": "multipart/form-data; boundary=caller" };
     const supplied = await echo.multipart({ body, headers });
     const bare = await echo.multipart({ body, headers: { "content-type": "multipart/form-data" } });
 
     expect((await echoedForm(supplied.body)).get("tag")).toBe("one");
     expect((await echoedForm(bare.body)).get("tag")).toBe("one");
-    expect(headers.get("content-type")).toBe("multipart/form-data; boundary=caller");
+    expect(headers).toEqual({ "content-type": "multipart/form-data; boundary=caller" });
 
     const malformed = await echo.multipart({ body, headers, unchecked: true });
     expect(malformed.body.headers["content-type"]).toBe("multipart/form-data; boundary=caller");
@@ -217,8 +213,8 @@ describe("Fetch", () => {
       }),
       adapter,
     );
-    const fields = new URLSearchParams("tag=one&tag=two");
-    const headers = new Headers({ "content-type": "application/x-www-form-urlencoded" });
+    const fields = "tag=one&tag=two";
+    const headers = { "content-type": "application/x-www-form-urlencoded" };
     const form = new FormData();
 
     await submit({ body: fields, headers });
@@ -226,16 +222,15 @@ describe("Fetch", () => {
 
     const [, init] = send.mock.calls[0]!;
     expect(init?.body).toBe(fields);
-    expect(init?.headers).toBe(headers);
     expect(send.mock.calls[1]?.[1]?.body).toBe(form);
 
-    const defaults = new Headers({ accept: "application/json" });
+    const defaults = { accept: "application/json" };
     await submit({ body: fields, headers: defaults });
 
     const prepared = new Headers(send.mock.calls[2]?.[1]?.headers);
     expect(prepared.get("content-type")).toBe("application/x-www-form-urlencoded");
     expect(prepared.get("accept")).toBe("application/json");
-    expect(defaults.has("content-type")).toBe(false);
+    expect(defaults).toEqual({ accept: "application/json" });
   });
 
   testWithServer("suppress Content-Type for text, form, and multipart", async ({ baseUrl }) => {
@@ -244,7 +239,7 @@ describe("Fetch", () => {
     const echo = bindEcho(adapter);
 
     const text = await echo.text({ body: "café \ud800x\udc00", headers });
-    const form = await echo.form({ body: new URLSearchParams({ note: "café" }), headers });
+    const form = await echo.form({ body: { note: "café" }, headers });
     const upload = await echo.multipart({ body: { note: "café" }, headers });
 
     expect(text.body.body).toBe("café \ufffdx\ufffd");

@@ -107,7 +107,7 @@ requests.
 Query, URL-encoded, and multipart fields accept records or arrays of
 `[name, value]` pairs. Repeat a name in the pairs or use an array as a record
 value. `undefined` omits a field and `null` sends an empty value. For a query
-or URL-encoded body, you can also pass an encoded string or `URLSearchParams`.
+or URL-encoded body, you can also pass an encoded string.
 
 ```ts
 await api.users.get({
@@ -137,9 +137,7 @@ File descriptors accept `data`, `filename?`, and `mediaType?`. The defaults are
 range. Fetch and Playwright accept `FormData` as the body. k6 accepts
 `http.file()` values as fields.
 
-Headers accept records, arrays of pairs, or `Headers`. Use records or pairs
-for queries, forms, and headers shared across runtimes. `Headers` and
-`URLSearchParams` require a compatible global constructor in the runtime.
+Headers accept records.
 
 Header names are case-insensitive. `undefined` allows a default value, `null`
 suppresses the header and its default, and `""` sends an empty value. Use one

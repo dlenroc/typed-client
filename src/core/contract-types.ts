@@ -9,7 +9,6 @@ import type {
   ResponseKindMap,
   QueryInput,
   HeaderInput,
-  HeaderValue,
   MultipartInput,
   FieldScalar,
   MultipartFile,
@@ -82,6 +81,18 @@ type IsFieldCollection<Value, Scalar> = Value extends readonly (infer Entry)[]
       >
     : false;
 
+type IsHeaderRecord<Value> = Value extends readonly unknown[]
+  ? false
+  : Value extends object
+    ? AllTrue<
+        {
+          [Key in keyof Value]-?: IsAny<Value[Key]> extends true
+            ? true
+            : IsFieldValue<Value[Key], FieldScalar>;
+        }[keyof Value]
+      >
+    : false;
+
 type IsFieldValue<Value, Wire> = [Value] extends [Wire] ? true : false;
 
 type SameType<Left, Right> = [Left] extends [Right]
@@ -102,13 +113,11 @@ type IsWireValue<Value, Wire> =
         : SameType<Wire, Readonly<Record<string, PathScalar>>> extends true
           ? IsFieldCollection<Defined<Value>, PathScalar>
           : SameType<Wire, QueryInput> extends true
-            ? Defined<Value> extends string | URLSearchParams
+            ? Defined<Value> extends string
               ? true
               : IsFieldCollection<Defined<Value>, FieldScalar>
             : SameType<Wire, HeaderInput> extends true
-              ? [Defined<Value>] extends [Headers]
-                ? true
-                : IsFieldCollection<Defined<Value>, HeaderValue>
+              ? IsHeaderRecord<Defined<Value>>
               : SameType<Wire, MultipartInput> extends true
                 ? [Defined<Value>] extends [FormData]
                   ? true
