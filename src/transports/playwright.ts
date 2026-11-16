@@ -27,7 +27,7 @@ interface PlaywrightMetadata {
 type PlaywrightContext = Pick<APIRequestContext, "fetch">;
 type PlaywrightFetchOptions = NonNullable<Parameters<APIRequestContext["fetch"]>[1]>;
 type PlaywrightNativeOptions = CommonOptions & {
-  /** Passed to `fetch`. A `maxRedirects` here overrides `follow`. */
+  /** Passed to `fetch`. `maxRedirects` here overrides `follow`. */
   readonly transport?: Pick<
     PlaywrightFetchOptions,
     "maxRedirects" | "maxRetries" | "ignoreHTTPSErrors" | "signal"
@@ -99,7 +99,7 @@ class PlaywrightResponseHandle implements TransportResponse<ResponseKindMap, Pla
         const bytes = await this.native.body();
         result = decodeMultipart(bytes, this.headers["content-type"]);
       } else {
-        throw new TypeError(`Unsupported Playwright response kind: ${String(kind)}`);
+        throw new TypeError(`Unsupported response kind: ${String(kind)}`);
       }
     } catch (cause) {
       return disposeAfterFailure(this.native, cause);
@@ -169,12 +169,11 @@ function playwrightMultipart(
 }
 
 /**
- * Disposes each response after reading or discarding it.
+ * Send requests with Playwright and dispose each response after use.
  *
  * @remarks
- * Use Playwright 1.62 or later. Pass the test's `request` fixture or
- * create one with `request.newContext()`. Keep Content-Type enabled
- * when sending a body.
+ * Use Playwright 1.62 or later. Do not set `content-type: null` on a
+ * request with a body.
  *
  * @example
  * ```ts
@@ -198,7 +197,10 @@ function playwrightMultipart(
  * @see {@link https://playwright.dev/docs/api-testing | API testing}
  */
 export function playwrightTransport(config: {
-  /** Dispose contexts you create. */
+  /**
+   * The `request` fixture or a context from `request.newContext()`.
+   * Dispose contexts you create.
+   */
   readonly context: PlaywrightContext;
 
   /** Relative endpoints append to this URL's path. */
@@ -230,7 +232,7 @@ export function playwrightTransport(config: {
       if (body !== undefined) {
         switch (request.bodyKind) {
           case "none":
-            throw new TypeError("none request body kind cannot have a body");
+            throw new TypeError("Request body kind none does not allow a body");
 
           case "json":
             options.data = encodeJson(body);
@@ -253,7 +255,7 @@ export function playwrightTransport(config: {
             break;
 
           default:
-            throw new TypeError(`Unsupported Playwright body kind: ${String(request.bodyKind)}`);
+            throw new TypeError(`Unsupported request body kind: ${String(request.bodyKind)}`);
         }
       }
 

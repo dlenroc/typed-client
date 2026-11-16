@@ -107,7 +107,7 @@ export function decodeMultipart(
   }
 
   if (!boundaryValue) {
-    throw new TypeError("Missing multipart boundary");
+    throw new TypeError("Multipart boundary is missing");
   }
 
   const boundary = encodeUtf8("--" + boundaryValue);
@@ -180,13 +180,13 @@ export function decodeMultipart(
   }
 
   if (at < 0) {
-    throw new TypeError("Multipart opening boundary not found");
+    throw new TypeError("Multipart opening boundary is missing");
   }
 
   while (at > 0) {
     const headerEnd = findBytes(endOfHeaders, at);
     if (headerEnd < 0) {
-      throw new TypeError("Malformed multipart headers");
+      throw new TypeError("Multipart headers are malformed");
     }
 
     const headerText = decodeUtf8(bytes.subarray(at, headerEnd));
@@ -212,7 +212,7 @@ export function decodeMultipart(
 
     const next = findDelimiter(bodyStart);
     if (next === undefined) {
-      throw new TypeError("Multipart closing boundary missing");
+      throw new TypeError("Multipart closing boundary is missing");
     }
 
     if (name !== undefined) {

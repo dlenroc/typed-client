@@ -151,7 +151,7 @@ describe("response errors", () => {
   });
 
   test.each([
-    { status: 418, error: { code: "status", status: 418, message: /418; expected 200/ } },
+    { status: 418, error: { code: "status", status: 418, message: /418 \(expected 200\)/ } },
     { status: 200, error: { code: "response", schema: "headers", issues } },
   ])("retain the primary failure when discarding HTTP $status fails", async ({ status, error }) => {
     const cleanupError = new Error("cannot discard");

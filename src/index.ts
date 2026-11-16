@@ -15,13 +15,14 @@ export type {
 
 export const c = {
   /**
-   * Use a full `:name` segment for a required path parameter.
+   * Declare an HTTP endpoint with its request and response types.
    *
    * @defaultValue GET with an optional JSON body.
    *
    * @remarks
-   * Path values are URL-escaped.
-   * With an empty or omitted response map, pass `status` on each call.
+   * Use a full `:name` segment for a required path parameter. The client
+   * URL-escapes path values. If there are no declared responses, pass
+   * `status` on each call.
    *
    * @example
    * ```ts
@@ -37,7 +38,8 @@ export const c = {
   endpoint,
 
   /**
-   * Supply a type without runtime validation. A bare body hint uses JSON.
+   * Supply a type without runtime validation. As a body declaration, it
+   * selects JSON.
    *
    * @see {@link https://standardschema.dev/ | Standard Schema} for validation.
    */
@@ -47,7 +49,7 @@ export const c = {
    * Bind an endpoint to get a callable function. Groups keep their keys.
    *
    * @remarks
-   * Import an adapter from `/fetch`, `/playwright`, or `/k6`.
+   * Import a transport from `/fetch`, `/playwright`, or `/k6`.
    * See {@link Transport} to implement or wrap one.
    *
    * @example

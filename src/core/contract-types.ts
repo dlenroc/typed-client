@@ -196,7 +196,7 @@ type BodySpec<Kind extends string = string> = Kind | SchemaLike | BodyDescriptor
 interface ResponseDescriptor {
   readonly body: BodySpec<ResponseKindName>;
 
-  /** Receives raw, lowercase header names and may transform them. */
+  /** Receives raw, lowercase header names and can transform them. */
   readonly headers?: SchemaLike;
   readonly "~standard"?: never;
   readonly [hintType]?: never;
@@ -212,13 +212,16 @@ export interface EndpointDefinition {
   /** @defaultValue "GET" */
   readonly method?: HttpMethod;
 
-  /** Transform call input into the values for `:name` segments. */
+  /** Schema for the `path` call field. Its output fills `:name` segments. */
   readonly path?: SchemaLike;
 
-  /** Runs before URL encoding. */
+  /** Schema for the `query` call field. Runs before URL encoding. */
   readonly query?: SchemaLike;
 
-  /** Runs before the transport applies header defaults. */
+  /**
+   * Schema for the `headers` call field. Runs before the transport applies
+   * header defaults.
+   */
   readonly headers?: SchemaLike;
 
   /**
@@ -232,12 +235,12 @@ export interface EndpointDefinition {
 
   /**
    * Use `{ body, headers }` to validate headers alongside the body.
-   * Body schemas receive the decoded value.
-   * Calls require `status` when this map is empty or omitted.
+   * Body schemas receive the decoded value. If there are no declared
+   * responses, pass `status` on each call.
    */
   readonly responses?: Readonly<Record<number, ResponseDefinition>>;
 
-  /** Passed by reference to the transport and included in ClientError. */
+  /** Passed by reference to the transport and included in `ClientError`. */
   readonly meta?: Readonly<Record<string, unknown>>;
 }
 
@@ -603,13 +606,25 @@ type MaybeDiscard<Options, Body> = [OptionValue<Options, "discard">] extends [tr
 
 type TransportField<Adapter extends AnyTransport> = [TransportMetadata<Adapter>] extends [never]
   ? {}
-  : { readonly transport?: TransportMetadata<Adapter> };
+  : {
+      /**
+       * For example, Fetch `redirected`, Playwright `statusText`, or k6
+       * `timings`.
+       */
+      readonly transport?: TransportMetadata<Adapter>;
+    };
 
 type ResponseCase<Status extends number, Response, Adapter extends AnyTransport, Options> =
   Simplify<{
     readonly status: Status;
+
+    /** The final response URL, after redirects. */
     readonly url: string;
+
+    /** Raw headers, or the output of the response headers schema. */
     readonly headers: FinalHeaders<Response>;
+
+    /** The decoded body, or the output of the response body schema. */
     readonly body: MaybeDiscard<Options, DecodedBody<Response, Adapter>>;
   } & TransportField<Adapter>>;
 
@@ -637,7 +652,8 @@ interface OperationTypes<
 }
 
 /**
- * Reuse checked call inputs with the bound transport's options.
+ * The input type of a checked call to a bound endpoint. Includes the
+ * native options of the bound transport.
  *
  * @example
  * ```ts
@@ -655,9 +671,10 @@ export type InferInput<Operation extends OperationTypes> = Simplify<
 >;
 
 /**
- * Result with the body retained. Pass a status or union of statuses.
- * Defaults to all declared statuses. Status-only endpoints need a status.
- * Undeclared statuses yield raw headers and an undefined body.
+ * The result type of a call to a bound endpoint. Pass a status or union
+ * of statuses. Defaults to all declared statuses. If there are no declared
+ * responses, pass a status. Accepted undeclared statuses return raw
+ * headers and `body: undefined`.
  *
  * @example
  * ```ts
@@ -677,10 +694,12 @@ type BoundOperation<Spec extends Endpoint, Adapter extends AnyTransport> = (
   {} extends CallFields<Spec, Adapter, {}>
     ? {
         /**
-         * Accepts any declared response status.
+         * Send the request and return the checked response. Accepts all
+         * declared statuses.
          *
          * @throws
-         * A {@link ClientError} if the call fails.
+         * A {@link ClientError} if the call fails, including an unexpected
+         * status.
          */
         (input?: undefined): Promise<ResultFor<Spec, Adapter, {}>>;
       }
@@ -688,16 +707,18 @@ type BoundOperation<Spec extends Endpoint, Adapter extends AnyTransport> = (
 ) & OperationTypes<Spec, Adapter> & {
   // Infer the flag before checking required fields so completions use it.
   /**
-   * Accepts declared statuses by default. Pass `status` to select
-   * which statuses to accept and narrow the result.
+   * Send the request and return the checked response. Accepts all declared
+   * statuses by default. Pass `status` to select which statuses to accept
+   * and narrow the result.
    *
    * @remarks
-   * Use `unchecked: true` to skip request schemas and override the method,
-   * path, or body kind. Use `discard: true` to check status and headers
-   * without decoding or validating the response body.
+   * Use `unchecked: true` to skip request schemas and allow `method`,
+   * `path`, and `bodyKind` overrides. Use `discard: true` to check status
+   * and headers, then discard the body before decoding.
    *
    * @throws
-   * A {@link ClientError} for a failed call, including an unexpected status.
+   * A {@link ClientError} if the call fails, including an unexpected
+   * status.
    *
    * @example
    * ```ts
@@ -726,11 +747,13 @@ type BoundOperation<Spec extends Endpoint, Adapter extends AnyTransport> = (
   ): Promise<ResultFor<Spec, Adapter, Input>>;
 
   /**
-   * Accepts declared statuses by default. Pass `status` to select
-   * which statuses to accept and narrow the result.
+   * Send the request and return the checked response. Accepts all declared
+   * statuses by default. Pass `status` to select which statuses to accept
+   * and narrow the result.
    *
    * @throws
-   * A {@link ClientError} if the call fails.
+   * A {@link ClientError} if the call fails, including an unexpected
+   * status.
    */
   <const Input extends CallOptions<Spec, Adapter> & RequestFields>(
     input: Input &

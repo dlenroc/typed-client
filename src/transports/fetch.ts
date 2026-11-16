@@ -26,7 +26,10 @@ interface FetchMetadata {
 }
 
 type FetchNativeOptions = CommonOptions & {
-  /** Passed to `fetch`. A `redirect` here overrides `follow`. */
+  /**
+   * Passed to `fetch`. `redirect` here overrides `follow`. The client
+   * combines `signal` here with `timeout`.
+   */
   readonly transport?: Omit<RequestInit, "method" | "headers" | "body">;
 };
 
@@ -144,7 +147,7 @@ class FetchResponseHandle implements TransportResponse<FetchResponseKinds, Fetch
       return stream as never;
     }
 
-    throw new TypeError(`Unsupported Fetch response body kind: ${String(kind)}`);
+    throw new TypeError(`Unsupported response kind: ${String(kind)}`);
   }
 
   async discard() {
@@ -158,11 +161,11 @@ class FetchResponseHandle implements TransportResponse<FetchResponseKinds, Fetch
 }
 
 /**
- * Use the browser's Fetch API or Node.js 24+.
+ * Send requests with the Fetch API of a browser or Node.js 24+.
  *
  * @remarks
- * Leave the body absent for GET and HEAD. Pass native options such as
- * `signal` under `transport`. This adapter also decodes `blob` and
+ * Do not send a body with `GET` or `HEAD`. Pass native options such as
+ * `signal` under `transport`. This transport also decodes `blob` and
  * `stream` responses. Consume or cancel returned streams. A stream
  * schema must release its reader lock before it returns or throws.
  * If the schema replaces the stream, consume or cancel the original.
@@ -214,7 +217,7 @@ export function fetchTransport(
       if (request.body !== undefined) {
         switch (request.bodyKind) {
           case "none":
-            throw new TypeError("none request body kind cannot have a body");
+            throw new TypeError("Request body kind none does not allow a body");
 
           case "json":
             body = encodeJson(request.body);
@@ -239,7 +242,7 @@ export function fetchTransport(
             break;
 
           default:
-            throw new TypeError(`Unsupported Fetch request body kind: ${String(request.bodyKind)}`);
+            throw new TypeError(`Unsupported request body kind: ${String(request.bodyKind)}`);
         }
       }
 

@@ -285,7 +285,7 @@ async function invoke(
       handle,
       new ClientError(
         "status",
-        `Unexpected status ${status}; expected ${expected}`,
+        `Unexpected status ${status} (expected ${expected})`,
         method,
         responseUrl,
         meta,

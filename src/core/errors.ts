@@ -5,14 +5,15 @@ type Meta = Readonly<Record<string, unknown>>;
 type SchemaPart = "path" | "query" | "headers" | "body";
 
 /**
- * Narrow by `code` to read failure-specific fields.
+ * The error that a bound call throws. Narrow by `code` to read its fields.
  *
  * @remarks
- * `request` means nothing was sent: the call input, URL, body
- * preparation, or a request schema failed. `transport` means the adapter
- * failed to deliver or release a response. `status` means the status
- * fell outside the accepted set. `response` means the response broke
- * the contract: its body could not be decoded or a schema rejected it.
+ * - `request`: Nothing was sent because the call input, URL, preparation,
+ *   or a schema failed.
+ * - `transport`: The transport failed to deliver or release a response.
+ * - `status`: The status falls outside the accepted set.
+ * - `response`: The body cannot be decoded, or a response schema rejects
+ *   the response.
  *
  * `schema` names the schema that failed. It reported `issues` or threw
  * `cause`.
@@ -33,19 +34,23 @@ export type ClientError = Error & {
   /** The endpoint's metadata object, passed by reference. */
   readonly meta: Meta;
 
-  /** The underlying failure, when there is one. */
   readonly cause: unknown;
 
   /** Present only when cleanup failed as well as the primary failure. */
   cleanupError?: unknown;
 } & (
     | {
+        /**
+         * Nothing was sent because the call input, URL, preparation, or a
+         * schema failed.
+         */
         readonly code: "request";
         readonly status: undefined;
         readonly schema: SchemaPart | undefined;
         readonly issues: readonly StandardIssue[] | undefined;
       }
     | {
+        /** The transport failed to deliver or release a response. */
         readonly code: "transport";
 
         /** Set when a response arrived but could not be released. */
@@ -54,12 +59,17 @@ export type ClientError = Error & {
         readonly issues: undefined;
       }
     | {
+        /** The status falls outside the accepted set. */
         readonly code: "status";
         readonly status: number;
         readonly schema: undefined;
         readonly issues: undefined;
       }
     | {
+        /**
+         * The body cannot be decoded, or a response schema rejects the
+         * response.
+         */
         readonly code: "response";
         readonly status: number;
 

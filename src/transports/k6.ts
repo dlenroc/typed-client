@@ -36,7 +36,10 @@ interface K6ResponseMetadata {
 type K6Part = string | FileData | MultipartFile;
 
 type K6NativeOptions = CommonOptions & {
-  /** Passed to k6 as request params. `redirects` and `timeout` here override the call's. */
+  /**
+   * Passed to k6 as params. `redirects` here overrides `follow`.
+   * `timeout` here overrides `timeout`.
+   */
   readonly transport?: Omit<Params, "headers" | "responseType">;
 };
 
@@ -282,12 +285,12 @@ class K6ResponseHandle implements TransportResponse<ResponseKindMap, K6ResponseM
 
     const captured = this.native.body;
     if (captured === null) {
-      throw new TypeError("k6 discarded response body");
+      throw new TypeError("k6 discarded the response body");
     }
 
     if (kind === "binary" || kind === "multipart") {
       if (!(captured instanceof ArrayBuffer)) {
-        throw new TypeError("k6 did not capture binary body");
+        throw new TypeError("k6 did not capture the binary response body");
       }
 
       const bytes = new Uint8Array(captured);
@@ -305,16 +308,18 @@ class K6ResponseHandle implements TransportResponse<ResponseKindMap, K6ResponseM
       return decodeUrlEncoded(text) as never;
     }
 
-    throw new TypeError(`Unsupported k6 response kind: ${String(kind)}`);
+    throw new TypeError(`Unsupported response kind: ${String(kind)}`);
   }
 }
 
 /**
- * Capture response bodies according to the expected response kinds.
+ * Send requests with `k6/http`.
  *
  * @remarks
- * Use k6 2.2 or later and add `@types/k6` for TypeScript. Bundle npm
- * imports for k6. Multipart fields accept `http.file()` values.
+ * Use k6 2.2 or later and add `@types/k6` for TypeScript. k6 does not
+ * load npm packages directly. Bundle the script first. The transport
+ * captures response bodies only for the expected response kinds.
+ * Multipart fields accept `http.file()` values.
  *
  * @example
  * ```ts
@@ -367,7 +372,7 @@ export function k6Transport(
       if (request.body !== undefined) {
         switch (request.bodyKind) {
           case "none":
-            throw new TypeError("none request body kind cannot have a body");
+            throw new TypeError("Request body kind none does not allow a body");
 
           case "json":
             body = encodeJson(request.body);
@@ -412,7 +417,7 @@ export function k6Transport(
           }
 
           default:
-            throw new TypeError(`Unsupported k6 body kind: ${String(request.bodyKind)}`);
+            throw new TypeError(`Unsupported request body kind: ${String(request.bodyKind)}`);
         }
       }
 

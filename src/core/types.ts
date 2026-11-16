@@ -3,8 +3,8 @@ type SchemaResult<Output> =
   | { readonly issues: readonly StandardIssue[] };
 
 /**
- * Request schemas run before sending. Response schemas receive decoded
- * bodies or raw headers. Both may validate asynchronously.
+ * Request schemas receive the call inputs. Response schemas receive raw
+ * headers or a decoded body. Both can validate asynchronously.
  *
  * @see {@link https://standardschema.dev/ | Standard Schema}
  */
@@ -29,14 +29,16 @@ type PairInput<Value> = readonly (readonly [string, Value])[];
 export type Fields<Value> = Readonly<Record<string, Value | readonly Value[]>> | PairInput<Value>;
 
 /**
- * Strings are already encoded. Repeat pairs or use arrays in records.
- * Omit a field with `undefined` or send an empty value with `null`.
+ * The client sends a string without encoding it. Repeat pairs or use
+ * arrays in records. Omit a field with `undefined` or send an empty value
+ * with `null`.
  */
 export type QueryInput = string | Fields<FieldScalar>;
 
 /**
- * Header names are case-insensitive and the last one wins. `undefined`
- * allows a default, `null` suppresses it, and `""` sends an empty value.
+ * Header names are case-insensitive. If a name repeats, the client sends
+ * the last value. `undefined` allows a default, `null` suppresses it, and
+ * `""` sends an empty value.
  */
 export type HeaderInput = Readonly<Record<string, FieldScalar>>;
 
@@ -54,8 +56,8 @@ export interface MultipartFile<Data = BinaryInput> {
 }
 
 /**
- * For repeated fields, use arrays in a record or repeat name-value pairs.
- * Omit fields with `undefined` or send empty values with `null`.
+ * Repeat pairs or use arrays in records. Omit a field with `undefined` or
+ * send an empty value with `null`.
  */
 export type MultipartInput = Fields<FieldScalar | MultipartFile> | FormData;
 
@@ -75,7 +77,10 @@ export type MultipartResponse = Readonly<
   Record<string, MultipartResponseValue | readonly MultipartResponseValue[] | undefined>
 >;
 
-/** Lowercase names. Repeated values may be combined by the native API. */
+/**
+ * Raw response headers with lowercase names. The native API can combine
+ * repeated values.
+ */
 export type ResponseHeaders = {
   readonly [Name in string]: string | readonly string[] | undefined;
 };
@@ -84,15 +89,18 @@ export type ResponseHeaders = {
 export interface RequestKindMap {
   readonly none: undefined;
 
-  /** Serialized with `JSON.stringify`. Failures raise a `request` error. */
+  /**
+   * Serialized with `JSON.stringify`. If serialization fails, the call
+   * throws a `request` error.
+   */
   readonly json: unknown;
   readonly text: string;
   readonly binary: BinaryInput;
   readonly urlencoded: QueryInput;
 
   /**
-   * Checked calls use the encoder's Content-Type boundary. With
-   * `unchecked: true`, a supplied Content-Type is sent as provided.
+   * Checked calls use the encoder's boundary. With `unchecked: true`, the
+   * client sends a supplied `Content-Type` unchanged.
    */
   readonly multipart: MultipartInput;
 }
@@ -110,15 +118,15 @@ export interface ResponseKindMap {
 export interface CoreOptions<Status extends number = number> {
   /**
    * A status array must be nonempty. Accepted undeclared statuses return
-   * an `undefined` body and raw headers.
+   * raw headers and `body: undefined`.
    *
    * @defaultValue All declared response statuses
    */
   readonly status?: Status | readonly Status[];
 
   /**
-   * Skip request schemas. Override `method`, `path`, or `bodyKind`.
-   * Declared responses still use their schemas.
+   * Skip request schemas and allow `method`, `path`, and `bodyKind`
+   * overrides. Declared responses still use their schemas.
    *
    * @defaultValue false
    */
@@ -130,7 +138,6 @@ export interface CoreOptions<Status extends number = number> {
    * @defaultValue false
    */
   readonly discard?: boolean;
-
 }
 
 /** Options a transport supports by adding this type to its own. */
@@ -138,7 +145,7 @@ export interface CommonOptions {
   /**
    * Milliseconds to wait for the response.
    *
-   * @defaultValue The runtime's own timeout
+   * @defaultValue k6: 60 s, Playwright: 30 s
    */
   readonly timeout?: number;
 
@@ -158,8 +165,8 @@ export interface RequestFields {
 }
 
 /**
- * Use the prepared fields to send the request. Treat nested inputs as
- * read-only.
+ * The request that the client prepares for a transport. Treat nested
+ * inputs as read-only.
  */
 export interface TransportRequest<
   Requests extends object = RequestKindMap,
@@ -171,11 +178,12 @@ export interface TransportRequest<
   /** URL before the transport applies its base URL. */
   url: string;
 
+  /** See {@link HeaderInput} for `undefined` and `null` values. */
   headers?: HeaderInput | undefined;
 
   bodyKind: keyof Requests & string;
 
-  /** `undefined` omits the body. JSON `null` is sent as a value. */
+  /** `undefined` omits the body. Send JSON `null` as a value. */
   body?: Requests[keyof Requests] | undefined;
 
   /** Use these possible decoded kinds to choose the native capture mode. */
@@ -186,7 +194,7 @@ export interface TransportRequest<
 
   /**
    * The original call object by reference. Includes raw request fields,
-   * call controls, and transport options.
+   * call options, and native options.
    */
   readonly input?:
     | (CoreOptions &
@@ -199,8 +207,8 @@ export interface TransportRequest<
 }
 
 /**
- * The client calls `read` at most once. The caller owns live resources
- * returned by a successful endpoint call.
+ * The response that a transport returns. The client calls `read` at most
+ * once. The caller owns live resources returned by a successful call.
  */
 export interface TransportResponse<
   Responses extends object = ResponseKindMap,
@@ -224,22 +232,24 @@ export interface TransportResponse<
 
   /**
    * Release resources when status or schema checks reject the response.
-   * May run before or after `read`. Without this method, the client uses
-   * `read("none")` for unread responses.
+   * The client can call it before or after `read`. Without this method,
+   * the client calls `read("none")` for unread responses.
    */
   discard?(): Promise<void>;
 }
 
 /**
- * See {@link TransportRequest} for the prepared input and
- * {@link TransportResponse} for response ownership.
+ * A function that sends a prepared request and returns a
+ * {@link TransportResponse}.
  *
  * @remarks
- * Read transport options from `request.input` and expose metadata through
- * the handle's `transport` field. Add {@link CommonOptions} to the
- * options to support `timeout` and `follow`. Before retrying a request, release the
- * previous response with `discard()` or `read("none")`. Release the
- * native response if handle creation fails.
+ * See {@link TransportRequest} for the prepared input and
+ * {@link TransportResponse} for response ownership.
+ * Read native options from `request.input` and expose metadata through
+ * the response's `transport` field. To support `timeout` and `follow`, add
+ * {@link CommonOptions} to the options. Before retrying a request,
+ * release the previous response with `discard()` or `read("none")`. If
+ * creating the `TransportResponse` fails, release the native response.
  *
  * @example
  * ```ts
