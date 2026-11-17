@@ -99,10 +99,10 @@ async function rejectResponse(
   bodyWasRead = false,
 ): Promise<never> {
   try {
-    if (handle.discard) {
-      await handle.discard();
-    } else if (!bodyWasRead) {
+    if (!bodyWasRead) {
       await handle.read("none");
+    } else if (handle.discard) {
+      await handle.discard();
     }
   } catch (cleanupError) {
     primary.cleanupError = cleanupError;

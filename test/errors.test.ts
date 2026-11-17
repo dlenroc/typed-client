@@ -169,6 +169,25 @@ describe("response errors", () => {
   });
 
   test.each([
+    { name: "an unread response with read(none)", status: 418, kind: "none", discards: 0 },
+    {
+      name: "a read value that a schema rejects with discard()",
+      status: 200,
+      kind: "json",
+      discards: 1,
+    },
+  ] as const)("release $name", async ({ status, kind, discards }) => {
+    const { adapter, response } = mockTransport({ status });
+    const discard = vi.fn(async () => {});
+    Object.assign(response, { discard });
+    const get = c.bind(c.endpoint("/users", { responses: { 200: invalid } }), adapter);
+
+    await expect(get()).rejects.toBeInstanceOf(ClientError);
+    expect(response.read).toHaveBeenCalledExactlyOnceWith(kind);
+    expect(discard).toHaveBeenCalledTimes(discards);
+  });
+
+  test.each([
     { kind: "json", error: { code: "response" } },
     { kind: "none", error: { code: "transport" } },
   ] as const)("classify a failed $kind read without retrying", async ({ kind, error }) => {

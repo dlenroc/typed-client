@@ -236,9 +236,8 @@ export interface TransportResponse<
   ): Promise<(Responses & { readonly none: undefined })[Kind]>;
 
   /**
-   * Release resources when status or schema checks reject the response.
-   * The client can call it before or after `read`. Without this method,
-   * the client calls `read("none")` for unread responses.
+   * Release a live value that `read` returned, for example a stream. The
+   * client calls it when a schema rejects that value.
    */
   discard?(): Promise<void>;
 }
@@ -253,7 +252,7 @@ export interface TransportResponse<
  * Read native options from `request.input` and expose metadata through
  * the response's `transport` field. To support `timeout` and `follow`, add
  * {@link CommonOptions} to the options. Before retrying a request,
- * release the previous response with `discard()` or `read("none")`. If
+ * release the previous response with `read("none")`. If
  * creating the `TransportResponse` fails, release the native response.
  *
  * @example

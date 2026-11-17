@@ -390,6 +390,6 @@ await ping();
 - Release buffered resources in `read()`. This includes `read("none")`, which
   the client calls to skip decoding.
 - If resources can stay live after `read()`, for example a returned stream,
-  implement `discard()`. The client calls it when a status or schema check
-  rejects the response.
+  implement `discard()`. The client calls it when a schema rejects the value
+  that `read()` returned.
 - The caller owns live resources that a successful call returns.

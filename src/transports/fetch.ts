@@ -160,9 +160,7 @@ class FetchResponseHandle implements TransportResponse<FetchResponseKinds, Fetch
   }
 
   async discard() {
-    if (this.state === "unread") {
-      await this.read("none");
-    } else if (this.state === "stream") {
+    if (this.state === "stream") {
       this.state = "read";
       await this.native.body?.cancel();
     }
