@@ -80,6 +80,11 @@ export const testWithServer = test.extend("baseUrl", async ({}, { onCleanup }) =
           "Content-Type: application/octet-stream\r\n\r\nAB\r\n--example--more\r\n" +
           "--example-- \t",
       );
+    } else if (path === "/v1/multipart-mixed") {
+      response.setHeader("content-type", "multipart/mixed; boundary=example");
+      response.end(
+        "--example\r\nContent-Type: text/plain\r\n\r\none\r\n--example--\r\n",
+      );
     } else if (path === "/v1/multipart") {
       response.setHeader("content-type", "multipart/form-data; boundary=example");
       response.end(

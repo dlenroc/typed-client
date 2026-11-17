@@ -191,6 +191,19 @@ describe.each(overHttp)("$name over HTTP", ({ create }) => {
     },
   );
 
+  testHttp("reject a multipart response that is not form-data", async ({ transport }) => {
+    const get = c.bind(
+      c.endpoint("/multipart-mixed", { responses: { 200: "multipart" } }),
+      transport,
+    );
+
+    await expect(get()).rejects.toMatchObject({
+      code: "response",
+      schema: undefined,
+      status: 200,
+    });
+  });
+
   testHttp("preserve every response byte", async ({ transport }) => {
     const get = c.bind(c.endpoint("/bytes", { responses: { 200: "binary" } }), transport);
     expect([...(await get()).body]).toEqual([0xe0, 0xa0, 0xff]);

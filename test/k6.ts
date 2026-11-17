@@ -211,6 +211,23 @@ async function responseDecoding() {
       new TextDecoder().decode(file.data) === "AB\r\n--example--more",
   });
 
+  const mixed = c.bind(
+    c.endpoint("/multipart-mixed", { responses: { 200: "multipart" } }),
+    adapter,
+  );
+  let mixedError: unknown;
+
+  try {
+    await mixed();
+  } catch (cause) {
+    mixedError = cause;
+  }
+
+  check(mixedError, {
+    "multipart/mixed is rejected": (value) =>
+      value instanceof ClientError && value.code === "response" && value.schema === undefined,
+  });
+
   const text = c.bind(
     c.endpoint("/bytes", { responses: { 200: "text", 206: "binary" } }),
     adapter,

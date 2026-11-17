@@ -78,6 +78,11 @@ export function decodeUrlEncoded(text: string): UrlEncodedResponse {
   return result;
 }
 
+/** The lowercase media type of a `Content-Type` value, without parameters. */
+export function mediaTypeOf(contentType: string) {
+  return contentType.split(";", 1)[0]!.trim().toLowerCase();
+}
+
 const multipartParameter = /;\s*([^=;\s]+)\s*=\s*(?:"([^"\\]*(?:\\.[^"\\]*)*)"|([^";\s]+))/g;
 
 function parameterValue(match: RegExpExecArray) {
@@ -96,6 +101,11 @@ export function decodeMultipart(
   const header = typeof contentType === "string" ? contentType : contentType?.[0];
   let boundaryValue: string | undefined;
   if (header !== undefined) {
+    // Other multipart types have no field names, so match Fetch and reject them.
+    if (mediaTypeOf(header) !== "multipart/form-data") {
+      throw new TypeError("Multipart response is not multipart/form-data");
+    }
+
     multipartParameter.lastIndex = 0;
     let match;
     while ((match = multipartParameter.exec(header)) !== null) {

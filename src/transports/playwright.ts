@@ -18,7 +18,7 @@ import {
 import { asFormData, encodeJson } from "./body.js";
 import { prepareHeaders, appendResponseHeader } from "./headers.js";
 import { createUrlResolver } from "../shared/url.js";
-import { decodeUrlEncoded, decodeMultipart } from "./codec.js";
+import { decodeUrlEncoded, decodeMultipart, mediaTypeOf } from "./codec.js";
 
 interface PlaywrightMetadata {
   readonly statusText: string;
@@ -283,7 +283,7 @@ export function playwrightTransport(config: {
           request.bodyKind !== "json" &&
           typeof options.data === "string" &&
           typeof contentType === "string" &&
-          contentType.split(";", 1)[0]!.trim().toLowerCase() === "application/json"
+          mediaTypeOf(contentType) === "application/json"
         ) {
           // Bytes prevent Playwright from JSON-encoding raw strings.
           options.data = Buffer.from(options.data);
