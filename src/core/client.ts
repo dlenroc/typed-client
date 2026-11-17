@@ -226,7 +226,7 @@ async function invoke(
   } catch (cause) {
     throw new ClientError(
       "request",
-      "Request URL construction failed",
+      "Cannot build request URL",
       method,
       undefined,
       meta,
@@ -337,7 +337,7 @@ async function invoke(
       kind === "none" || cleanupFailed
         ? new ClientError(
             "transport",
-            `Response cleanup failed (status ${status})`,
+            `Cannot release response (status ${status})`,
             method,
             responseUrl,
             meta,

@@ -1,3 +1,4 @@
+import { inspect } from "node:util";
 import { describe, expect, test, vi } from "vitest";
 import { c, ClientError } from "@dlenroc/typed-client";
 import { fetchTransport } from "@dlenroc/typed-client/fetch";
@@ -241,5 +242,190 @@ test("ClientError preserves structured diagnostics through JSON serialization", 
     url: "https://api.test/users/7",
     status: 200,
     meta,
+  });
+});
+
+function clientError(
+  summary: string,
+  url: string | undefined,
+  cause?: unknown,
+  issues?: ConstructorParameters<typeof ClientError>[7],
+) {
+  return new ClientError("transport", summary, "GET", url, {}, undefined, undefined, issues, cause);
+}
+
+describe("error messages", () => {
+  test("name the request and list the issues", async () => {
+    const twoIssues = [
+      { path: ["user", { key: "id" }], message: "Expected number" },
+      { message: "Second issue" },
+    ];
+    const { adapter } = mockTransport();
+    const get = c.bind(
+      c.endpoint("/users/7", { responses: { 200: schema(() => ({ issues: twoIssues })) } }),
+      adapter,
+    );
+    const error: unknown = await get().catch((failure: unknown) => failure);
+
+    expect.assert(error instanceof ClientError);
+    expect(error.message).toBe(
+      "Response body schema reported 2 issues (status 200) for GET https://api.test/users/7\n" +
+        "  - user.id: Expected number\n" +
+        "  - Second issue",
+    );
+  });
+
+  test("give the request URL with its query and fragment", async () => {
+    const offline = new Error("offline");
+    const get = c.bind(
+      c.endpoint("/users?page=2#top", { responses: { 200: "none" } }),
+      fetchTransport({
+        baseUrl: "https://api.test",
+        fetch: async () => {
+          throw offline;
+        },
+      }),
+    );
+    const error: unknown = await get().catch((failure: unknown) => failure);
+
+    expect.assert(error instanceof ClientError);
+    expect(error.message).toBe(
+      "Cannot get response for GET https://api.test/users?page=2#top: offline",
+    );
+  });
+
+  test("give the cause when no issue explains the failure", async () => {
+    const get = c.bind(c.endpoint("/users/{id}"), fetchTransport());
+    const error: unknown = await get({ path: {} as { id: string }, status: 200 }).catch(
+      (failure: unknown) => failure,
+    );
+
+    expect.assert(error instanceof ClientError);
+    expect(error.message).toBe("Cannot build request URL: Missing path parameter: id");
+  });
+
+  test.for([
+    {
+      name: "URL credentials",
+      url: "https://user:secret@api.test/x?page=2",
+      cause: undefined,
+      expected: "Failed for GET https://api.test/x?page=2",
+    },
+    {
+      name: "a password with a raw @",
+      url: "http://u:secret@w@h.test/x",
+      cause: undefined,
+      expected: "Failed for GET http://h.test/x",
+    },
+    {
+      name: "the request URL credentials inside the cause",
+      url: "https://u:secret@h.test/x",
+      cause: new Error("Failed to fetch https://u:secret@h.test/x"),
+      expected: "Failed for GET https://h.test/x: Failed to fetch https://h.test/x",
+    },
+    {
+      name: "the lines after the first line of the cause",
+      url: "/x",
+      cause: new Error("connect failed\nAuthorization: secret"),
+      expected: "Failed for GET /x: connect failed",
+    },
+    {
+      name: "the credentials of a scheme-relative URL",
+      url: "//u:secret@h.test/x",
+      cause: undefined,
+      expected: "Failed for GET //h.test/x",
+    },
+  ])("leave $name out of the message", ({ url, cause, expected }) => {
+    const { message } = clientError("Failed", url, cause);
+
+    expect(message).toBe(expected);
+    expect(message).not.toContain("secret");
+  });
+
+  test("give the code of a cause without a message", () => {
+    const refused = Object.assign(new AggregateError([], ""), { code: "ECONNREFUSED" });
+    const cause = new TypeError("fetch failed", { cause: refused });
+    const { message } = clientError("Failed", "/x", cause);
+
+    expect(message).toBe("Failed for GET /x: fetch failed (ECONNREFUSED)");
+  });
+
+  test("replace the request URL as plain text", () => {
+    const url = "https://u:secret@h.test/x?q=$&";
+    const { message } = clientError("Failed", url, new Error(`Failed to fetch ${url}`));
+
+    expect(message).toBe(
+      "Failed for GET https://h.test/x?q=$&: Failed to fetch https://h.test/x?q=$&",
+    );
+  });
+
+  test("keep an @ in the query", () => {
+    const { message } = clientError("Failed", "https://h.test?email=a@b.test");
+
+    expect(message).toBe("Failed for GET https://h.test?email=a@b.test");
+  });
+
+  test("give the path alone for an issue without a message", () => {
+    const error = clientError("Request body schema reported 1 issue", undefined, undefined, [
+      { path: ["id"], message: "" },
+    ]);
+
+    expect(error.message).toBe("Request body schema reported 1 issue\n  - id");
+  });
+
+  test("print array indexes in brackets", () => {
+    const error = clientError("Failed", undefined, undefined, [
+      { path: ["roles", 0, { key: 2 }, "name"], message: "Invalid" },
+    ]);
+
+    expect(error.message).toBe("Failed\n  - roles[0][2].name: Invalid");
+  });
+
+  test("leave out a path that the message starts with", () => {
+    const error = clientError("Failed", undefined, undefined, [
+      { path: ["roles", 0], message: "roles[0] must be a string (was 1)" },
+      { path: ["id"], message: "identifier is required" },
+    ]);
+
+    expect(error.message).toBe(
+      "Failed\n" +
+        "  - roles[0] must be a string (was 1)\n" +
+        "  - id: identifier is required",
+    );
+  });
+
+  test("give the outer cause alone when the inner cause is empty", () => {
+    const { message } = clientError("Failed", "", new Error("outer", { cause: new Error("") }));
+
+    expect(message).toBe("Failed: outer");
+  });
+
+  test("give the first line of a string cause", () => {
+    const { message } = clientError("Failed", "/x", "aborted\nby the test");
+
+    expect(message).toBe("Failed for GET /x: aborted");
+  });
+
+  test("list 10 issues without a count of the rest", () => {
+    const ten = Array.from({ length: 10 }, (_, i) => ({ path: [i], message: "Invalid" }));
+    const lines = clientError("Failed", undefined, undefined, ten).message.split("\n");
+
+    expect(lines).toHaveLength(11);
+    expect(lines[10]).toBe("  - [9]: Invalid");
+  });
+
+  test("list at most 10 issues", () => {
+    const many = Array.from({ length: 12 }, (_, i) => ({ path: [i], message: "Invalid" }));
+    const lines = clientError("Failed", undefined, undefined, many).message.split("\n");
+
+    expect(lines).toHaveLength(12);
+    expect(lines[10]).toBe("  - [9]: Invalid");
+    expect(lines[11]).toBe("  - … 2 more");
+  });
+
+  test("print the public class name", () => {
+    const error = clientError("Unexpected status 500", "/x");
+
+    expect(inspect(error)).toMatch(/^ClientError: Unexpected status 500 for GET \/x/);
   });
 });

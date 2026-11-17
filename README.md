@@ -295,6 +295,11 @@ available. `schema` names the schema that failed: `path`, `query`, `headers`,
 or `body`. That schema either reported `issues` or threw `cause`. A `response`
 error without `schema` means the body could not be decoded.
 
+The message names the method and the URL when the URL is known. It lists up to
+10 issues, one per line, or gives the first line of the cause and of its cause.
+It leaves out URL credentials. The `url` and `cause` fields keep the full
+values.
+
 If cleanup fails as well, `cleanupError` holds the secondary failure.
 Reporters that serialize errors can read `code`, `meta`, and the other
 enumerable fields. Read `message` and `cause` explicitly when building a

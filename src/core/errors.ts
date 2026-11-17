@@ -79,6 +79,85 @@ export type ClientError = Error & {
       }
   );
 
+// URL credentials are secrets, and messages go to logs.
+function withoutCredentials(url: string) {
+  return url.replace(/^((?:[a-z][a-z\d+.-]*:)?\/\/)[^/?#]*@/i, "$1");
+}
+
+function pathText(path: StandardIssue["path"] = []) {
+  let text = "";
+  for (let i = 0; i < path.length; i++) {
+    const segment = path[i]!;
+    const key = typeof segment === "object" ? segment.key : segment;
+    text += typeof key === "number" ? `[${key}]` : (i === 0 ? "" : ".") + String(key);
+  }
+
+  return text;
+}
+
+function issueText(issue: StandardIssue) {
+  const path = pathText(issue.path);
+  // Some schemas, such as ArkType, start the message with the path.
+  if (path === "" || issue.message.startsWith(`${path} `)) {
+    return issue.message;
+  }
+
+  return issue.message === "" ? path : `${path}: ${issue.message}`;
+}
+
+const shownIssues = 10;
+
+function issuesText(issues: readonly StandardIssue[]) {
+  const shown = Math.min(issues.length, shownIssues);
+  let text = "";
+  for (let i = 0; i < shown; i++) {
+    text += `\n  - ${issueText(issues[i]!)}`;
+  }
+
+  if (issues.length > shown) {
+    text += `\n  - … ${issues.length - shown} more`;
+  }
+
+  return text;
+}
+
+// Only the first line: native messages can add call logs with headers.
+function firstLine(error: unknown) {
+  const text = typeof error === "string" ? error : error instanceof Error ? error.message : "";
+  const line = text.split("\n", 1)[0]!;
+  // Node gives a refused connection to `localhost` only as a code.
+  const code = (error as { code?: unknown } | undefined)?.code;
+  return line === "" && typeof code === "string" ? code : line;
+}
+
+function causeText(cause: unknown) {
+  const outer = firstLine(cause);
+  if (outer === "") {
+    return "";
+  }
+
+  const inner = firstLine((cause as Error).cause);
+  return inner === "" ? `: ${outer}` : `: ${outer} (${inner})`;
+}
+
+function describe(
+  summary: string,
+  method: string,
+  url: string | undefined,
+  issues: readonly StandardIssue[] | undefined,
+  cause: unknown,
+) {
+  const detail =
+    issues !== undefined && issues.length > 0 ? issuesText(issues) : causeText(cause);
+  if (!url) {
+    return summary + detail;
+  }
+
+  const requestUrl = withoutCredentials(url);
+  // The detail can repeat the request URL.
+  return `${summary} for ${method} ${requestUrl}${detail.replaceAll(url, () => requestUrl)}`;
+}
+
 class ClientErrorInstance extends Error {
   declare readonly code: string;
   declare readonly method: string;
@@ -91,7 +170,7 @@ class ClientErrorInstance extends Error {
 
   constructor(
     code: ClientError["code"],
-    message: string,
+    summary: string,
     method: string,
     url: string | undefined,
     meta: Meta,
@@ -100,7 +179,7 @@ class ClientErrorInstance extends Error {
     issues: readonly StandardIssue[] | undefined,
     cause: unknown,
   ) {
-    super(message);
+    super(describe(summary, method, url, issues, cause));
     this.code = code;
     this.method = method;
     this.url = url;
@@ -112,6 +191,7 @@ class ClientErrorInstance extends Error {
   }
 }
 
+Object.defineProperty(ClientErrorInstance, "name", { value: "ClientError" });
 ClientErrorInstance.prototype.name = "ClientError";
 
 export const ClientError = ClientErrorInstance as unknown as {
@@ -158,7 +238,7 @@ export function transportError(
   return preserveCleanupError(
     new ClientError(
       prepared ? "transport" : "request",
-      prepared ? "Transport failed to return a response" : "Request preparation failed",
+      prepared ? "Cannot get response" : "Cannot prepare request",
       method,
       url,
       meta,
