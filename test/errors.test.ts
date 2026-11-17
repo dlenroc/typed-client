@@ -68,7 +68,7 @@ describe("request errors", () => {
 
   test("reject a missing path value before sending", async () => {
     const { adapter } = mockTransport();
-    const get = c.bind(c.endpoint("/users/:id"), adapter);
+    const get = c.bind(c.endpoint("/users/{id}"), adapter);
 
     // @ts-expect-error exercise the runtime check for untyped callers
     const result = get({ status: 200 });

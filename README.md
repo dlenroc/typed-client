@@ -13,15 +13,17 @@ The package uses ESM. Fetch works in Node.js 24+ and in browsers with
 
 ## `c.endpoint(url, definition?)`
 
-`method` defaults to `GET`. A full `:name` path segment requires a matching
-field in `path`, and the client URL-escapes its value.
+`method` defaults to `GET`. Each `{name}` before `?` or `#` is a required path
+parameter. A parameter can be part of a segment, for example
+`/files/{name}.json` or `/jobs/{id}:cancel`. `{}` is literal text. The client
+escapes path values with `encodeURIComponent`.
 
 ```ts
 import { c } from "@dlenroc/typed-client";
 
 type User = { id: number; name: string };
 
-export const getUser = c.endpoint("/users/:id", {
+export const getUser = c.endpoint("/users/{id}", {
   responses: {
     200: c.type<User>(),
     404: "none",
@@ -163,7 +165,7 @@ Validators for `path`, `query`, `headers`, and `body` follow
 import { z } from "zod";
 
 const getVerifiedUser = c.bind(
-  c.endpoint("/users/:id", {
+  c.endpoint("/users/{id}", {
     responses: { 200: z.object({ id: z.number(), name: z.string() }) },
   }),
   transport,

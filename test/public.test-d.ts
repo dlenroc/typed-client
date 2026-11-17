@@ -21,7 +21,7 @@ declare const unchecked: { unchecked?: boolean };
 describe("bound calls", () => {
   const api = c.bind(
     {
-      getUser: c.endpoint("/users/:id", {
+      getUser: c.endpoint("/users/{id}", {
         responses: {
           200: { body: c.type<{ id: number }>(), headers: c.type<{ "x-team": string }>() },
           404: "none",
@@ -49,6 +49,24 @@ describe("bound calls", () => {
     ({ path: { id: 7 }, unchecked: true }) satisfies InferInput<typeof api.getUser>;
     // @ts-expect-error Fetch cache options are checked
     await api.getUser({ path: { id: 7 }, transport: { cache: "bad" } });
+  });
+
+  test("infer path parameters inside segments", () => {
+    const job = c.bind(
+      c.endpoint("/jobs/{id}:cancel/{file}.json?x={y}", { responses: { 204: "none" } }),
+      fetchTransport(),
+    );
+    ({ path: { id: 1, file: "a" } }) satisfies InferInput<typeof job>;
+    // @ts-expect-error each `{name}` in the path is required
+    ({ path: { id: 1 } }) satisfies InferInput<typeof job>;
+    // @ts-expect-error `{name}` in the query is literal text
+    ({ path: { id: 1, file: "a", y: 2 } }) satisfies InferInput<typeof job>;
+
+    const literal = c.bind(
+      c.endpoint("/users/:id/{}", { responses: { 204: "none" } }),
+      fetchTransport(),
+    );
+    void literal();
   });
 
   test("narrow bodies by declared and explicitly accepted statuses", async () => {
@@ -309,7 +327,7 @@ test("retain custom transport options, callback types, and response metadata", a
     };
   };
   const get = c.bind(
-    c.endpoint("/users/:id", {
+    c.endpoint("/users/{id}", {
       responses: { 200: c.type<{ id: number }>() },
     }),
     adapter,

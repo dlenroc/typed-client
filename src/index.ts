@@ -20,9 +20,11 @@ export const c = {
    * @defaultValue GET with an optional JSON body.
    *
    * @remarks
-   * Use a full `:name` segment for a required path parameter. The client
-   * URL-escapes path values. If there are no declared responses, pass
-   * `status` on each call.
+   * Each `{name}` before `?` or `#` is a required path parameter. A
+   * parameter can be part of a segment, for example `/files/{name}.json`
+   * or `/jobs/{id}:cancel`. `{}` is literal text. The client escapes path
+   * values with `encodeURIComponent`. If there are no declared responses,
+   * pass `status` on each call.
    *
    * @example
    * ```ts

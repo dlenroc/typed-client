@@ -212,7 +212,7 @@ export interface EndpointDefinition {
   /** @defaultValue "GET" */
   readonly method?: HttpMethod;
 
-  /** Schema for the `path` call field. Its output fills `:name` segments. */
+  /** Schema for the `path` call field. Its output fills `{name}` parameters. */
   readonly path?: SchemaLike;
 
   /** Schema for the `query` call field. Runs before URL encoding. */
@@ -430,15 +430,16 @@ type StripAfter<
 > = Text extends `${infer Prefix}${Delimiter}${string}` ? Prefix : Text;
 
 type PathOnly<Url extends string> = StripAfter<StripAfter<Url, "?">, "#">;
-type NameInSegment<Segment extends string> = Segment extends `:${infer Name}`
-  ? Exclude<Name, "">
-  : never;
+// Match the runtime: each `{name}` is a parameter, and `{}` is literal text.
+// The accumulator keeps the recursion in tail position for long templates.
+type TemplateNames<
+  Path extends string,
+  Names extends string = never,
+> = Path extends `${string}{${infer Name}}${infer Rest}`
+  ? TemplateNames<Rest, Names | Exclude<Name, "">>
+  : Names;
 
-type SegmentNames<Path extends string> = Path extends `${infer Head}/${infer Tail}`
-  ? NameInSegment<Head> | SegmentNames<Tail>
-  : NameInSegment<Path>;
-
-type PathNames<Url extends string> = string extends Url ? string : SegmentNames<PathOnly<Url>>;
+type PathNames<Url extends string> = string extends Url ? string : TemplateNames<PathOnly<Url>>;
 
 type Simplify<Value> = { [Key in keyof Value]: Value[Key] } & {};
 type FieldProperty<Key extends string, Value> = undefined extends Value

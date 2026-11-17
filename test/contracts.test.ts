@@ -17,7 +17,7 @@ describe("endpoint calls", () => {
         });
 
       const create = c.bind(
-        c.endpoint("/users/:id", {
+        c.endpoint("/users/{id}", {
           method: "POST",
           path: transform("path", { id: "a/b" }),
           query: transform("query", { tag: ["one", "two"] }),
@@ -84,7 +84,7 @@ describe("endpoint calls", () => {
   test("preserve literal query and fragment when adding repeated query fields", async () => {
     const { adapter } = mockTransport();
     const get = c.bind(
-      c.endpoint("/users/:/:id?fixed=1#end", {
+      c.endpoint("/users/:/{id}?fixed=1#end", {
         responses: { 200: "json" },
       }),
       adapter,
@@ -101,6 +101,21 @@ describe("endpoint calls", () => {
     expect(adapter).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ url: "/users/:/a%2Fb?fixed=1&tag=one&tag=two#end" }),
     );
+  });
+
+  test.for([
+    { template: "/files/{name}.json", path: { name: "a b" }, url: "/files/a%20b.json" },
+    { template: "/jobs/{id}:cancel", path: { id: "x:y" }, url: "/jobs/x%3Ay:cancel" },
+    { template: "/r/{a}-{b}", path: { a: 1, b: 2 }, url: "/r/1-2" },
+    { template: "/users/:id/{}", path: {}, url: "/users/:id/{}" },
+    { template: "/a/{b?q={c}", path: {}, url: "/a/{b?q={c}" },
+  ])("fill parameters in $template", async ({ template, path, url }) => {
+    const { adapter } = mockTransport();
+    const get = c.bind(c.endpoint(template, { responses: { 200: "json" } }), adapter);
+
+    await get({ path } as never);
+
+    expect(adapter).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ url }));
   });
 
   test("pass the original inputs and metadata to a nested binding", async () => {
@@ -162,7 +177,7 @@ describe("call controls", () => {
     const validate = vi.fn(() => ({ value: { id: 7 } }));
     const requestSchema = schema(validate);
     const get = c.bind(
-      c.endpoint("/users/:id", {
+      c.endpoint("/users/{id}", {
         path: requestSchema,
         query: requestSchema,
         headers: requestSchema,

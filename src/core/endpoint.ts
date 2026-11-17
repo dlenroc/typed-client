@@ -12,27 +12,27 @@ import type {
 
 function compilePath(url: string): PathPlan {
   const suffixStart = url.search(/[?#]/);
-  const pathnameEnd = suffixStart < 0 ? url.length : suffixStart;
+  // Only the part before `?` or `#` has parameters.
+  const path = suffixStart < 0 ? url : url.slice(0, suffixStart);
   const names: string[] = [];
   const parts: string[] = [];
-  let segmentStart = 0;
   let literalStart = 0;
+  let open = path.indexOf("{");
 
-  while (segmentStart < pathnameEnd) {
-    const slash = url.indexOf("/", segmentStart);
-    const segmentEnd = slash < 0 || slash >= pathnameEnd ? pathnameEnd : slash;
-
-    if (url[segmentStart] === ":" && segmentStart + 1 < segmentEnd) {
-      parts.push(url.slice(literalStart, segmentStart));
-      names.push(url.slice(segmentStart + 1, segmentEnd));
-      literalStart = segmentEnd;
-    }
-
-    if (segmentEnd === pathnameEnd) {
+  while (open >= 0) {
+    const close = path.indexOf("}", open + 1);
+    if (close < 0) {
       break;
     }
 
-    segmentStart = segmentEnd + 1;
+    // `{}` has no name, so it stays literal text.
+    if (close > open + 1) {
+      parts.push(url.slice(literalStart, open));
+      names.push(url.slice(open + 1, close));
+      literalStart = close + 1;
+    }
+
+    open = path.indexOf("{", close + 1);
   }
 
   if (names.length === 0) {
