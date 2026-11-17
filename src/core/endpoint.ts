@@ -72,9 +72,9 @@ export function type<Value>(): TypeHint<Value> {
 }
 
 function executableSchema(input: unknown): StandardSchemaV1 | undefined {
-  return input !== null && typeof input === "object" && "~standard" in input
-    ? (input as StandardSchemaV1)
-    : undefined;
+  return (input as Partial<StandardSchemaV1> | undefined)?.["~standard"] === undefined
+    ? undefined
+    : (input as StandardSchemaV1);
 }
 
 function normalizeBody(input: unknown): NormalizedBody {
@@ -113,7 +113,7 @@ export function endpoint(url: string, definition: EndpointDefinition = {}): Endp
       declared !== null &&
       typeof declared === "object" &&
       declared !== typeMarker &&
-      !("~standard" in declared) &&
+      executableSchema(declared) === undefined &&
       "body" in declared
         ? declared
         : undefined;

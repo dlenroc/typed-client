@@ -169,6 +169,30 @@ describe("endpoint calls", () => {
     );
     expect(response.read).toHaveBeenCalledExactlyOnceWith("json");
   });
+
+  test("recognize Standard Schemas that are functions", async () => {
+    const { adapter } = mockTransport();
+    const callable = <Output>(output: Output) =>
+      Object.assign(() => {}, schema(() => ({ value: output })), { kind: "intersection" });
+    const call = c.bind(
+      c.endpoint("/users/{id}", {
+        method: "POST",
+        path: callable({ id: "8" }),
+        query: callable({ q: "a" }),
+        body: callable({ name: "Ada" }),
+        responses: { 200: callable("Grace") },
+      }),
+      adapter,
+    );
+
+    await expect(call({ path: { id: "7" }, query: {}, body: {} })).resolves.toMatchObject({
+      body: "Grace",
+    });
+
+    expect(adapter).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ url: "/users/8?q=a", bodyKind: "json", body: { name: "Ada" } }),
+    );
+  });
 });
 
 describe("call controls", () => {
