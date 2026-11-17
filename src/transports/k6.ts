@@ -15,7 +15,7 @@ import type {
 } from "../core/types.js";
 import { encodeFields, forEachField } from "../shared/fields.js";
 import { createUrlResolver } from "../shared/url.js";
-import { binaryView, encodeJson } from "./body.js";
+import { encodeJson } from "./body.js";
 import { decodeMultipart, decodeUrlEncoded, decodeUtf8, encodeUtf8 } from "./codec.js";
 import { prepareHeaders } from "./headers.js";
 
@@ -24,6 +24,18 @@ interface K6RequestKinds extends Omit<RequestKindMap, "multipart"> {
 }
 
 type K6Http = Pick<typeof import("k6/http"), "asyncRequest" | "file">;
+
+// k6 sends a `DataView` as an empty body, and other views that are not a
+// `Uint8Array` fail or send wrong bytes.
+function binaryView(input: BinaryInput): Uint8Array {
+  if (input instanceof Uint8Array) {
+    return input;
+  }
+
+  return input instanceof ArrayBuffer
+    ? new Uint8Array(input)
+    : new Uint8Array(input.buffer, input.byteOffset, input.byteLength);
+}
 
 /** A cookie that k6 parsed from `Set-Cookie`, with the k6 field names. */
 interface K6Cookie {

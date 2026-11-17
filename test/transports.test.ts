@@ -122,11 +122,17 @@ describe.each(overHttp)("$name over HTTP", ({ create }) => {
     },
   );
 
-  testHttp.for(["record", "pairs"] as const)(
-    "encode multipart %s with file defaults and the selected bytes",
-    async (shape, { echo }) => {
+  testHttp.for([
+    { shape: "record", view: "Uint8Array" },
+    { shape: "pairs", view: "Uint8Array" },
+    { shape: "record", view: "DataView" },
+    { shape: "pairs", view: "DataView" },
+  ] as const)(
+    "encode multipart $shape with file defaults and the selected $view bytes",
+    async ({ shape, view }, { echo }) => {
       const bytes = new Uint8Array([88, 65, 66, 89]);
-      const file = { data: bytes.subarray(1, 3) };
+      const data = view === "Uint8Array" ? bytes.subarray(1, 3) : new DataView(bytes.buffer, 1, 2);
+      const file = { data };
       const input =
         shape === "record"
           ? { tag: "café", file }

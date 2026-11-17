@@ -18,7 +18,7 @@ import {
 import { asFormData, encodeJson } from "./body.js";
 import { prepareHeaders, appendResponseHeader } from "./headers.js";
 import { createUrlResolver } from "../shared/url.js";
-import { decodeUrlEncoded, decodeMultipart, mediaTypeOf } from "./codec.js";
+import { decodeUrlEncoded, decodeMultipart } from "./codec.js";
 
 interface PlaywrightMetadata {
   readonly timing: ReturnType<APIResponse["timing"]>;
@@ -249,16 +249,17 @@ export function playwrightTransport(config: {
 
       const body = request.body;
       if (body !== undefined) {
+        // Playwright parses or JSON-encodes some string bodies, so send bytes.
         switch (request.bodyKind) {
           case "none":
             throw new TypeError("Request body kind none does not allow a body");
 
           case "json":
-            options.data = encodeJson(body);
+            options.data = Buffer.from(encodeJson(body));
             break;
 
           case "text":
-            options.data = body as string;
+            options.data = Buffer.from(body as string);
             break;
 
           case "binary":
@@ -266,7 +267,7 @@ export function playwrightTransport(config: {
             break;
 
           case "urlencoded":
-            options.data = encodeFields(body as RequestKindMap["urlencoded"]);
+            options.data = Buffer.from(encodeFields(body as RequestKindMap["urlencoded"]));
             break;
 
           case "multipart":
@@ -288,17 +289,6 @@ export function playwrightTransport(config: {
 
         if (selected.contentTypeSuppressed && request.body !== undefined) {
           throw new TypeError("Playwright cannot suppress Content-Type for a request with a body");
-        }
-
-        const contentType = selected.contentType;
-        if (
-          request.bodyKind !== "json" &&
-          typeof options.data === "string" &&
-          contentType !== undefined &&
-          mediaTypeOf(contentType) === "application/json"
-        ) {
-          // Bytes prevent Playwright from JSON-encoding raw strings.
-          options.data = Buffer.from(options.data);
         }
 
         options.headers = selected.fields;

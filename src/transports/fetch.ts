@@ -10,7 +10,7 @@ import type {
 } from "../core/types.js";
 import { asSearchParams } from "../shared/fields.js";
 import { transportError } from "../core/errors.js";
-import { asFormData, binaryView, encodeJson } from "./body.js";
+import { asFormData, encodeJson } from "./body.js";
 import { prepareHeaders, appendResponseHeader } from "./headers.js";
 import { createUrlResolver } from "../shared/url.js";
 import { decodeUrlEncoded, encodeUtf8 } from "./codec.js";
@@ -88,15 +88,10 @@ class FetchResponseHandle implements TransportResponse<FetchResponseKinds, Fetch
     this.url = native.url;
     this.transport = { redirected: native.redirected, type: native.type };
 
+    // Iteration gives each Set-Cookie value separately.
     const headers: Record<string, string | string[]> = Object.create(null);
     for (const [name, value] of native.headers) {
       appendResponseHeader(headers, name, value);
-    }
-
-    // Header iteration can combine Set-Cookie values.
-    const cookies = native.headers.getSetCookie?.();
-    if (cookies?.length) {
-      headers["set-cookie"] = cookies;
     }
 
     this.headers = headers;
@@ -243,7 +238,8 @@ export function fetchTransport(
             break;
 
           case "binary":
-            body = binaryView(request.body as RequestKindMap["binary"]) as BodyInit;
+          case "blob":
+            body = request.body as BodyInit;
             break;
 
           case "urlencoded": {
@@ -254,10 +250,6 @@ export function fetchTransport(
 
           case "multipart":
             body = asFormData(request.body as RequestKindMap["multipart"]);
-            break;
-
-          case "blob":
-            body = request.body as FetchRequestKinds["blob"];
             break;
 
           case "stream":

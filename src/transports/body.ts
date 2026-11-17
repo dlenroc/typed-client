@@ -1,4 +1,4 @@
-import type { BinaryInput, MultipartInput } from "../core/types.js";
+import type { MultipartInput } from "../core/types.js";
 import { forEachField } from "../shared/fields.js";
 
 export function encodeJson(body: unknown) {
@@ -8,16 +8,6 @@ export function encodeJson(body: unknown) {
   }
 
   return encoded;
-}
-
-export function binaryView(input: BinaryInput): Uint8Array {
-  if (input instanceof Uint8Array) {
-    return input;
-  }
-
-  return input instanceof ArrayBuffer
-    ? new Uint8Array(input)
-    : new Uint8Array(input.buffer, input.byteOffset, input.byteLength);
 }
 
 export function asFormData(fields: MultipartInput) {
@@ -32,9 +22,8 @@ export function asFormData(fields: MultipartInput) {
     }
 
     if (value !== null && typeof value === "object" && "data" in value) {
-      const bytes = binaryView(value.data);
       const blob = new Blob(
-        [bytes as BlobPart],
+        [value.data as BlobPart],
         value.mediaType === undefined ? {} : { type: value.mediaType },
       );
 
