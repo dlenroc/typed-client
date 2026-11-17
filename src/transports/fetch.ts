@@ -15,6 +15,20 @@ import { prepareHeaders, appendResponseHeader } from "./headers.js";
 import { createUrlResolver } from "../shared/url.js";
 import { decodeUrlEncoded, encodeUtf8 } from "./codec.js";
 
+interface FetchRequestKinds extends RequestKindMap {
+  /**
+   * A `Blob` or `File`. Fetch uses its `type`, if not empty, as the default
+   * `Content-Type`.
+   */
+  readonly blob: Blob;
+
+  /**
+   * A `ReadableStream` of bytes. Fetch reads the stream once while it sends
+   * the body. With `follow: true`, a redirect other than 303 fails.
+   */
+  readonly stream: ReadableStream<Uint8Array>;
+}
+
 interface FetchResponseKinds extends ResponseKindMap {
   readonly blob: Blob;
   readonly stream: ReadableStream<Uint8Array>;
@@ -192,7 +206,7 @@ export function fetchTransport(
     /** @defaultValue globalThis.fetch */
     readonly fetch?: typeof globalThis.fetch;
   } = {},
-): Transport<RequestKindMap, FetchResponseKinds, FetchNativeOptions, FetchMetadata> {
+): Transport<FetchRequestKinds, FetchResponseKinds, FetchNativeOptions, FetchMetadata> {
   const fetch = config.fetch ?? globalThis.fetch;
   const resolveUrl = createUrlResolver(config.baseUrl);
 
@@ -208,7 +222,8 @@ export function fetchTransport(
       let body: BodyInit | undefined;
       const input = request.input;
       const native = input?.transport;
-      const options: RequestInit = { ...native, method: request.method };
+      // DOM `RequestInit` has no `duplex`, which a stream body needs.
+      const options: RequestInit & { duplex?: "half" } = { ...native, method: request.method };
       if (native !== undefined) {
         delete options.headers;
         delete options.body;
@@ -241,6 +256,15 @@ export function fetchTransport(
             body = asFormData(request.body as RequestKindMap["multipart"]);
             break;
 
+          case "blob":
+            body = request.body as FetchRequestKinds["blob"];
+            break;
+
+          case "stream":
+            body = request.body as FetchRequestKinds["stream"];
+            options.duplex = "half";
+            break;
+
           default:
             throw new TypeError(`Unsupported request body kind: ${String(request.bodyKind)}`);
         }
@@ -261,6 +285,9 @@ export function fetchTransport(
             body = encodeUtf8(body.toString()) as BodyInit;
           } else if (body instanceof FormData) {
             body = await new Response(body).arrayBuffer();
+          } else if (body instanceof Blob) {
+            // A slice has an empty type and shares the data without a copy.
+            body = body.slice();
           }
         }
 

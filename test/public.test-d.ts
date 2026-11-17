@@ -10,6 +10,8 @@ import {
   type Transport,
 } from "@dlenroc/typed-client";
 import { fetchTransport } from "@dlenroc/typed-client/fetch";
+import { playwrightTransport } from "@dlenroc/typed-client/playwright";
+import type { APIRequestContext } from "playwright-core";
 
 declare const flag: boolean;
 declare const status: { status?: 418 };
@@ -238,6 +240,36 @@ describe("schemas and body kinds", () => {
     // @ts-expect-error the chosen kind may forbid a body
     await send({ body: { id: 7 } });
     await send({ unchecked: true, bodyKind: "json", body: { id: 7 } });
+  });
+
+  test("accept a stream request body only on Fetch", () => {
+    const upload = c.endpoint("/upload", {
+      method: "POST",
+      body: "stream",
+      responses: { 204: "none" },
+    });
+    const send = c.bind(upload, fetchTransport());
+
+    void send({ body: new ReadableStream<Uint8Array>() });
+    // @ts-expect-error a stream body must be a ReadableStream
+    void send({ body: "text" });
+    // @ts-expect-error Playwright has no stream request kind
+    c.bind(upload, playwrightTransport({ context: {} as APIRequestContext }));
+  });
+
+  test("accept a blob request body only on Fetch", () => {
+    const upload = c.endpoint("/upload", {
+      method: "POST",
+      body: "blob",
+      responses: { 204: "none" },
+    });
+    const send = c.bind(upload, fetchTransport());
+
+    void send({ body: new Blob(["x"]) });
+    // @ts-expect-error a blob body must be a Blob
+    void send({ body: new Uint8Array([1]) });
+    // @ts-expect-error Playwright has no blob request kind
+    c.bind(upload, playwrightTransport({ context: {} as APIRequestContext }));
   });
 
   test("check each custom kind against the bound transport", () => {

@@ -243,6 +243,48 @@ describe.each(overHttp)("$name over HTTP", ({ create }) => {
 });
 
 describe("Fetch", () => {
+  testWithServer("send a blob body with its type as the default Content-Type", async ({
+    baseUrl,
+  }) => {
+    const upload = c.bind(
+      c.endpoint("/echo", { method: "POST", body: "blob", responses: { 200: c.type<Echo>() } }),
+      fetchTransport({ baseUrl }),
+    );
+    const body = new Blob(["café"], { type: "text/x-note" });
+
+    const typed = await upload({ body });
+    const replaced = await upload({ body, headers: { "content-type": "text/plain" } });
+    const suppressed = await upload({ body, headers: { "content-type": null } });
+
+    expect(typed.body).toMatchObject({ body: "café", headers: { "content-type": "text/x-note" } });
+    expect(replaced.body.headers["content-type"]).toBe("text/plain");
+    expect(suppressed.body.body).toBe("café");
+    expect(suppressed.body.headers["content-type"]).toBeUndefined();
+  });
+
+  testWithServer("send a stream body without a default Content-Type", async ({
+    baseUrl,
+  }) => {
+    const upload = c.bind(
+      c.endpoint("/echo", { method: "POST", body: "stream", responses: { 200: c.type<Echo>() } }),
+      fetchTransport({ baseUrl }),
+    );
+    const encoder = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode("ca"));
+        controller.enqueue(encoder.encode("fé"));
+        controller.close();
+      },
+    });
+
+    const result = await upload({ body });
+
+    expect(result.body.body).toBe("café");
+    expect(result.body.headers["transfer-encoding"]).toBe("chunked");
+    expect(result.body.headers["content-type"]).toBeUndefined();
+  });
+
   test("reuse native inputs and leave caller headers intact when adding a default", async () => {
     const send = vi
       .fn<typeof fetch>()

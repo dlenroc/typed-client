@@ -96,8 +96,12 @@ a response header schema, for example `404: { body: "none", headers }`.
 | `urlencoded` | Encoded string or fields        | Record of strings or arrays        |
 | `multipart`  | Fields with text or file values | Record of strings, files or arrays |
 
-Fetch also supports `blob` and `stream` responses. Consume or cancel a
-returned stream when you finish with it.
+Fetch also sends `blob` and `stream` bodies and decodes `blob` and `stream`
+responses. A `blob` body is a `Blob` or `File`. Fetch uses its `type`, if not
+empty, as the default `Content-Type`. A `stream` body is a `ReadableStream` of
+bytes. Fetch reads the stream once while it sends the body. With
+`follow: true`, a redirect other than 303 fails for a `stream` body. Consume or
+cancel a returned stream when you finish with it.
 
 If the body is absent or `undefined`, the client sends no body and no default
 `Content-Type`. The client sends JSON `null` as a value. If JSON serialization
