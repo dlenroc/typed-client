@@ -608,7 +608,7 @@ type TransportField<Adapter extends AnyTransport> = [TransportMetadata<Adapter>]
   ? {}
   : {
       /**
-       * For example, Fetch `redirected`, Playwright `statusText`, or k6
+       * For example, Fetch `redirected`, Playwright `serverAddr`, or k6
        * `timings`.
        */
       readonly transport?: TransportMetadata<Adapter>;

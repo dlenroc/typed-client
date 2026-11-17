@@ -492,6 +492,24 @@ describe("Fetch", () => {
 });
 
 describe("Playwright", () => {
+  testWithServer("return timing and the server address as metadata", async ({ baseUrl }) => {
+    const context = await request.newContext();
+    onTestFinished(() => context.dispose());
+    const get = c.bind(
+      c.endpoint("/empty", { responses: { 204: "none" } }),
+      playwrightTransport({ context, baseUrl }),
+    );
+
+    const { transport } = await get();
+
+    expect(transport?.serverAddr).toEqual({
+      ipAddress: "127.0.0.1",
+      port: Number(new URL(baseUrl).port),
+    });
+    expect(transport?.securityDetails).toBeNull();
+    expect(transport?.timing.startTime).toBeGreaterThan(0);
+  });
+
   testWithServer("decode multipart tokens and padded delimiters", async ({ baseUrl }) => {
     const context = await request.newContext();
     onTestFinished(() => context.dispose());
@@ -534,7 +552,7 @@ describe("Playwright", () => {
     );
     expect(send.mock.calls[0]?.[1]?.data).toBe(input);
     expect(result.body).toBe(output);
-    expect(result.transport?.statusText).toBe("OK");
+    expect(result.transport).toEqual({ timing: {}, serverAddr: null, securityDetails: null });
     expect(dispose).toHaveBeenCalledExactlyOnceWith();
   });
 
@@ -588,8 +606,10 @@ function nativeResponse(
   return {
     status: () => 200,
     url: () => "https://api.test/response",
-    statusText: () => "OK",
     headersArray: () => [],
+    timing: () => ({}) as ReturnType<APIResponse["timing"]>,
+    serverAddr: async () => null,
+    securityDetails: async () => null,
     ...fields,
   } as APIResponse;
 }

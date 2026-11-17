@@ -17,6 +17,7 @@ const adapter = k6Transport({ baseUrl: __ENV.BASE_URL! });
 
 async function jsonRequests() {
   let nativeTimings: Response["timings"] | undefined;
+  let nativeCookies: Response["cookies"] | undefined;
   const post = c.bind(
     c.endpoint("/echo", {
       method: "POST",
@@ -31,6 +32,7 @@ async function jsonRequests() {
         ) {
           const response = await http.asyncRequest<Kind>(...args);
           nativeTimings = response.timings;
+          nativeCookies = response.cookies;
           return response;
         },
       },
@@ -47,6 +49,16 @@ async function jsonRequests() {
       nativeTimings !== undefined &&
       timings !== nativeTimings &&
       timings?.duration === nativeTimings.duration,
+  });
+  check(json.transport?.cookies, {
+    // k6 returns a new `cookies` wrapper on each access, but the same cookie
+    // objects, so the copy keeps them by reference.
+    "cookies keep the parsed k6 cookie objects": (cookies) =>
+      cookies !== undefined &&
+      (cookies.a?.[0] as unknown) === nativeCookies?.a?.[0] &&
+      cookies.a?.[0]?.value === "1" &&
+      cookies.a[0].http_only === false &&
+      cookies.b?.[0]?.value === "2",
   });
 }
 
@@ -210,6 +222,22 @@ async function responseDecoding() {
       "data" in file &&
       file.filename === "a.bin" &&
       new TextDecoder().decode(file.data) === "AB\r\n--example--more",
+  });
+
+  const refused = c.bind(c.endpoint("http://127.0.0.1:1/", { responses: {} }), adapter);
+  check(await refused({ status: 0 }), {
+    "a connection error has status 0 and no cookies": (value) =>
+      value.status === 0 &&
+      value.transport !== undefined &&
+      Object.keys(value.transport.cookies).length === 0,
+  });
+
+  const empty = c.bind(c.endpoint("/empty", { responses: { 204: "none" } }), adapter);
+  check(await empty(), {
+    "metadata has the remote port and empty TLS data over HTTP": (value) =>
+      value.transport?.remote_port === Number(/:(\d+)/.exec(__ENV.BASE_URL!)?.[1]) &&
+      value.transport.tls_version === "" &&
+      value.transport.tls_cipher_suite === "",
   });
 
   const mixed = c.bind(

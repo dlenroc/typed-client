@@ -261,7 +261,7 @@ Declared responses still use their schemas.
 Responses contain `status`, `url`, `headers`, and `body`. Raw headers use
 lowercase names and preserve repeated values when the native API exposes them
 separately. The `transport` field carries metadata such as Fetch `redirected`,
-Playwright `statusText`, or k6 `timings`.
+Playwright `serverAddr`, or k6 `timings`.
 
 ```ts
 import { ClientError } from "@dlenroc/typed-client";
@@ -351,6 +351,9 @@ export default async function () {
   await loadGet({ path: { id: 42 }, status: 200 });
 }
 ```
+
+k6 joins repeated `Set-Cookie` headers into one value. Read the parsed cookies
+from `transport.cookies`.
 
 See [Loading npm packages in k6](https://grafana.com/docs/k6/latest/using-k6/modules/#use-nodejs-modules).
 

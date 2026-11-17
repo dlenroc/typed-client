@@ -25,12 +25,42 @@ interface K6RequestKinds extends Omit<RequestKindMap, "multipart"> {
 
 type K6Http = Pick<typeof import("k6/http"), "asyncRequest" | "file">;
 
+/** A cookie that k6 parsed from `Set-Cookie`, with the k6 field names. */
+interface K6Cookie {
+  readonly name: string;
+  readonly value: string;
+  readonly domain: string;
+  readonly path: string;
+  readonly http_only: boolean;
+  readonly secure: boolean;
+  readonly max_age: number;
+  readonly expires: number;
+}
+
+/**
+ * The k6 response as k6 gives it. `@types/k6` names two cookie fields
+ * `httpOnly` and `maxAge`, and its `tls_cipher_suite` type has no `""`.
+ */
+type K6Response = Omit<Response, "cookies" | "tls_cipher_suite"> & {
+  readonly cookies: Readonly<Record<string, readonly K6Cookie[]>>;
+  readonly tls_cipher_suite: Response["tls_cipher_suite"] | "";
+};
+
 interface K6ResponseMetadata {
-  readonly timings: Response["timings"];
-  readonly proto: Response["proto"];
-  readonly remote_ip: Response["remote_ip"];
-  readonly error: Response["error"];
-  readonly error_code: Response["error_code"];
+  /** Parsed `Set-Cookie` values by cookie name. */
+  readonly cookies: K6Response["cookies"];
+  readonly timings: K6Response["timings"];
+  readonly proto: K6Response["proto"];
+  readonly remote_ip: K6Response["remote_ip"];
+  readonly remote_port: K6Response["remote_port"];
+
+  /** The TLS version, or `""` if the connection does not use TLS. */
+  readonly tls_version: K6Response["tls_version"];
+
+  /** The TLS cipher suite, or `""` if the connection does not use TLS. */
+  readonly tls_cipher_suite: K6Response["tls_cipher_suite"];
+  readonly error: K6Response["error"];
+  readonly error_code: K6Response["error_code"];
 }
 
 type K6Part = string | FileData | MultipartFile;
@@ -244,14 +274,22 @@ class K6ResponseHandle implements TransportResponse<ResponseKindMap, K6ResponseM
   readonly transport: K6ResponseMetadata;
   private consumed = false;
 
-  constructor(private readonly native: Response) {
+  constructor(private readonly native: K6Response) {
     this.status = native.status;
     this.url = native.url;
     this.headers = normalizeHeaders(native.headers);
 
-    // The native timings object retains the response body.
+    // The native `cookies` and `timings` objects retain the response body.
+    // The cookie lists do not retain it, so a new record reuses them.
+    const nativeCookies = native.cookies;
+    const cookies: Record<string, readonly K6Cookie[]> = Object.create(null);
+    for (const name in nativeCookies) {
+      cookies[name] = nativeCookies[name]!;
+    }
+
     const timings = native.timings;
     this.transport = {
+      cookies,
       timings: {
         blocked: timings.blocked,
         connecting: timings.connecting,
@@ -263,6 +301,9 @@ class K6ResponseHandle implements TransportResponse<ResponseKindMap, K6ResponseM
       },
       proto: native.proto,
       remote_ip: native.remote_ip,
+      remote_port: native.remote_port,
+      tls_version: native.tls_version,
+      tls_cipher_suite: native.tls_cipher_suite,
       error: native.error,
       error_code: native.error_code,
     };
@@ -451,7 +492,7 @@ export function k6Transport(
 
       prepared = true;
       const response = await httpApi.asyncRequest(request.method, url, body, params as Params);
-      return new K6ResponseHandle(response);
+      return new K6ResponseHandle(response as unknown as K6Response);
     } catch (failure) {
       throw transportError(prepared, request.method, url, request.meta, failure);
     }

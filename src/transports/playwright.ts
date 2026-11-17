@@ -21,7 +21,19 @@ import { createUrlResolver } from "../shared/url.js";
 import { decodeUrlEncoded, decodeMultipart, mediaTypeOf } from "./codec.js";
 
 interface PlaywrightMetadata {
-  readonly statusText: string;
+  readonly timing: ReturnType<APIResponse["timing"]>;
+
+  /**
+   * The server IP address and port, or `null` if Playwright does not know
+   * them.
+   */
+  readonly serverAddr: Awaited<ReturnType<APIResponse["serverAddr"]>>;
+
+  /**
+   * The TLS certificate and protocol, or `null` for a response that is not
+   * HTTPS.
+   */
+  readonly securityDetails: Awaited<ReturnType<APIResponse["securityDetails"]>>;
 }
 
 type PlaywrightContext = Pick<APIRequestContext, "fetch">;
@@ -54,11 +66,12 @@ class PlaywrightResponseHandle implements TransportResponse<ResponseKindMap, Pla
   private constructor(
     private readonly native: APIResponse,
     headers: ResponseHeaders,
+    transport: PlaywrightMetadata,
   ) {
     this.headers = headers;
     this.status = native.status();
     this.url = native.url();
-    this.transport = { statusText: native.statusText() };
+    this.transport = transport;
   }
 
   static async create(native: APIResponse) {
@@ -70,7 +83,13 @@ class PlaywrightResponseHandle implements TransportResponse<ResponseKindMap, Pla
         appendResponseHeader(headers, entry.name, entry.value);
       }
 
-      return new PlaywrightResponseHandle(native, headers);
+      const transport: PlaywrightMetadata = {
+        timing: native.timing(),
+        serverAddr: await native.serverAddr(),
+        securityDetails: await native.securityDetails(),
+      };
+
+      return new PlaywrightResponseHandle(native, headers, transport);
     } catch (cause) {
       return disposeAfterFailure(native, cause);
     }
