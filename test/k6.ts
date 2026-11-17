@@ -119,8 +119,9 @@ async function multipartRequests() {
   ] as const) {
     const result = await upload({
       body,
+      // Both cases also check a Content-Type name with another spelling.
       headers: {
-        "content-type":
+        "Content-Type":
           encoding === "native" ? "multipart/form-data" : "multipart/form-data; boundary=caller",
       },
     });

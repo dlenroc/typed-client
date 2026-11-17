@@ -260,36 +260,29 @@ export function playwrightTransport(config: {
       }
 
       if (request.headers !== undefined || request.body !== undefined) {
-        let suppressContentType = false;
-        const preparedHeaders = prepareHeaders(
+        const selected = prepareHeaders(
           request.headers,
           request.bodyKind,
           request.body !== undefined,
-          (suppressed) => {
-            suppressContentType = suppressed;
-          },
+          input?.unchecked === true,
         );
 
-        if (suppressContentType && request.body !== undefined) {
+        if (selected.contentTypeSuppressed && request.body !== undefined) {
           throw new TypeError("Playwright cannot suppress Content-Type for a request with a body");
         }
 
-        if (options.multipart !== undefined && input?.unchecked !== true) {
-          delete preparedHeaders["content-type"];
-        }
-
-        const contentType = preparedHeaders["content-type"];
+        const contentType = selected.contentType;
         if (
           request.bodyKind !== "json" &&
           typeof options.data === "string" &&
-          typeof contentType === "string" &&
+          contentType !== undefined &&
           mediaTypeOf(contentType) === "application/json"
         ) {
           // Bytes prevent Playwright from JSON-encoding raw strings.
           options.data = Buffer.from(options.data);
         }
 
-        options.headers = preparedHeaders;
+        options.headers = selected.fields;
       }
 
       if (options.maxRedirects === undefined && input?.follow !== true) {

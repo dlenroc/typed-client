@@ -48,6 +48,7 @@ export type Echo = {
   method?: string;
   url?: string;
   headers: Record<string, string | string[] | undefined>;
+  rawHeaders: string[];
   body: string;
 };
 
@@ -100,6 +101,7 @@ export const testWithServer = test.extend("baseUrl", async ({}, { onCleanup }) =
           method: request.method,
           url: request.url,
           headers: request.headers,
+          rawHeaders: request.rawHeaders,
           body: Buffer.concat(chunks).toString(),
         }),
       );

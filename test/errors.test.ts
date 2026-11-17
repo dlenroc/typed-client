@@ -77,22 +77,14 @@ describe("request errors", () => {
     expect(adapter).not.toHaveBeenCalled();
   });
 
-  test("classify invalid headers as preparation errors", async () => {
-    const send = vi.fn<typeof fetch>();
-    const get = c.bind(
-      c.endpoint("/users"),
-      fetchTransport({
-        baseUrl: "https://api.test/v1",
-        fetch: send,
-      }),
-    );
+  test("report a header that Fetch rejects as a transport error", async () => {
+    const get = c.bind(c.endpoint("/users"), fetchTransport({ baseUrl: "https://api.test/v1" }));
 
     await expect(get({ headers: { "bad\nname": "value" }, status: 200 })).rejects.toMatchObject({
-      code: "request",
-      schema: undefined,
+      code: "transport",
       url: "https://api.test/v1/users",
+      cause: { name: "TypeError" },
     });
-    expect(send).not.toHaveBeenCalled();
   });
 
   test("report JSON serialization failures before sending", async () => {

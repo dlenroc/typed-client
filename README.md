@@ -139,10 +139,12 @@ File values accept `data`, `filename?`, and `mediaType?`. The defaults are
 range. Fetch and Playwright accept `FormData` as the body. k6 accepts
 `http.file()` values as fields.
 
-Headers accept a record. Header names are case-insensitive. If a name repeats,
-the client sends the last value. `undefined` allows a default value, `null`
-suppresses the header and its default, and `""` sends an empty value. With
-Playwright, do not set `content-type: null` on a request with a body.
+Headers accept a record. The client sends header names as given. Names that
+differ only in case are one header, so the client sends the last spelling and
+the last value. k6, Playwright, and HTTP/2 can change the case. `undefined`
+allows a default value, `null` suppresses the header and its default, and `""`
+sends an empty value. With Playwright, do not set `content-type: null` on a
+request with a body.
 
 A checked call is a call without `unchecked: true`. Checked multipart calls use
 the encoder's boundary. To send a custom `Content-Type` in a negative test, use

@@ -247,26 +247,15 @@ export function fetchTransport(
       }
 
       const headers = request.headers;
-      const useMultipartBoundary =
-        request.bodyKind === "multipart" &&
-        body !== undefined &&
-        input?.unchecked !== true;
       if (headers !== undefined || body !== undefined) {
-        let suppressContentType = false;
-        const rawHeaders = prepareHeaders(
+        const selected = prepareHeaders(
           headers,
           request.bodyKind,
           body !== undefined,
-          (suppressed) => {
-            suppressContentType = suppressed;
-          },
+          input?.unchecked === true,
         );
 
-        if (useMultipartBoundary) {
-          delete rawHeaders["content-type"];
-        }
-
-        if (suppressContentType) {
+        if (selected.contentTypeSuppressed) {
           // Fetch leaves Content-Type unset for byte bodies.
           if (typeof body === "string" || body instanceof URLSearchParams) {
             body = encodeUtf8(body.toString()) as BodyInit;
@@ -275,11 +264,8 @@ export function fetchTransport(
           }
         }
 
-        const preparedHeaders = new Headers();
-        for (const key in rawHeaders) {
-          preparedHeaders.append(key, rawHeaders[key]!);
-        }
-        options.headers = preparedHeaders;
+        // A plain record keeps the caller's header name case.
+        options.headers = selected.fields;
       }
 
       if (body !== undefined) {

@@ -147,14 +147,35 @@ describe.each(overHttp)("$name over HTTP", ({ create }) => {
     },
   );
 
+  testHttp("send header names as given and keep the last spelling", async ({ echo }) => {
+    const { body } = await echo.text({
+      body: "x",
+      headers: { "X-MiXeD": "1", "x-a": "first", "X-A": "last", "Content-Type": "text/csv" },
+    });
+    const pairs: string[] = [];
+    for (let i = 0; i < body.rawHeaders.length; i += 2) {
+      pairs.push(`${body.rawHeaders[i]}: ${body.rawHeaders[i + 1]}`);
+    }
+
+    expect(pairs).toEqual(
+      expect.arrayContaining(["X-MiXeD: 1", "X-A: last", "Content-Type: text/csv"]),
+    );
+    expect(pairs.filter((pair) => /^(x-a|content-type):/i.test(pair))).toHaveLength(2);
+  });
+
   testHttp("use the encoder's boundary for multipart headers", async ({ echo }) => {
     const body = { tag: "one" };
     const headers = { "content-type": "multipart/form-data; boundary=caller" };
     const supplied = await echo.multipart({ body, headers });
     const bare = await echo.multipart({ body, headers: { "content-type": "multipart/form-data" } });
+    const spelled = await echo.multipart({
+      body,
+      headers: { "Content-Type": "multipart/form-data; boundary=caller" },
+    });
 
     expect((await echoedForm(supplied.body)).get("tag")).toBe("one");
     expect((await echoedForm(bare.body)).get("tag")).toBe("one");
+    expect((await echoedForm(spelled.body)).get("tag")).toBe("one");
     expect(headers).toEqual({ "content-type": "multipart/form-data; boundary=caller" });
 
     const malformed = await echo.multipart({ body, headers, unchecked: true });
@@ -304,7 +325,7 @@ describe("Fetch", () => {
     expect(init).not.toHaveProperty("body");
   });
 
-  test("compare header names without case and keep the last value", async () => {
+  test("treat names that differ only in case as one header", async () => {
     const send = vi
       .fn<typeof fetch>()
       .mockImplementation(async () => new Response(null, { status: 204 }));
@@ -317,10 +338,37 @@ describe("Fetch", () => {
       headers: { authorization: "default", "x-skip": undefined, Authorization: "caller", "x-n": 3 },
     });
 
-    expect([...new Headers(send.mock.calls[0]?.[1]?.headers)]).toEqual([
-      ["authorization", "caller"],
-      ["x-n", "3"],
-    ]);
+    expect(send.mock.calls[0]?.[1]?.headers).toEqual({ Authorization: "caller", "x-n": "3" });
+  });
+
+  test.for([
+    {
+      name: "a later null suppresses the header and its default",
+      headers: { "content-type": "text/csv", "Content-Type": null },
+      expected: {},
+    },
+    {
+      name: "a later undefined keeps the earlier spelling",
+      headers: { "content-type": "text/csv", "Content-Type": undefined },
+      expected: { "content-type": "text/csv" },
+    },
+    {
+      name: "a later empty value replaces the default",
+      headers: { "content-type": "text/csv", "Content-Type": "" },
+      expected: { "Content-Type": "" },
+    },
+  ])("apply the header rules across spellings: $name", async ({ headers, expected }) => {
+    const send = vi
+      .fn<typeof fetch>()
+      .mockImplementation(async () => new Response(null, { status: 204 }));
+    const post = c.bind(
+      c.endpoint("/users", { method: "POST", body: "text", responses: { 204: "none" } }),
+      fetchTransport({ baseUrl: "https://api.test", fetch: send }),
+    );
+
+    await post({ body: "x", headers });
+
+    expect(send.mock.calls[0]?.[1]?.headers).toEqual(expected);
   });
 
   testWithServer("suppress Content-Type for text, form, and multipart", async ({ baseUrl }) => {

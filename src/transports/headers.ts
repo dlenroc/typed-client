@@ -11,14 +11,31 @@ export function defaultContentType(bodyKind: string) {
   }
 }
 
+export interface PreparedHeaders {
+  readonly fields: Record<string, string>;
+
+  /** The `Content-Type` value in `fields`, if `fields` has it. */
+  readonly contentType: string | undefined;
+
+  /** The caller set `Content-Type` to `null`. */
+  readonly contentTypeSuppressed: boolean;
+}
+
+/**
+ * Merge names that differ only in case and add the default `Content-Type`.
+ * A checked multipart body drops the caller's `Content-Type`, because the
+ * encoder sets the boundary.
+ */
 export function prepareHeaders(
   headers: HeaderInput | undefined,
   bodyKind: string,
   bodyPresent: boolean,
-  contentTypeSuppressed: (suppressed: boolean) => void,
-): Record<string, string> {
-  const result: Record<string, string> = Object.create(null);
-  let suppressedContentType = false;
+  unchecked: boolean,
+): PreparedHeaders {
+  const fields: Record<string, string> = Object.create(null);
+  // Map each lowercase name to the spelling that `fields` uses.
+  const spellings: Record<string, string> = Object.create(null);
+  let contentTypeSuppressed = false;
 
   if (headers !== undefined) {
     for (const name in headers) {
@@ -28,28 +45,39 @@ export function prepareHeaders(
       }
 
       const key = name.toLowerCase();
+      const previous = spellings[key];
+      if (previous !== undefined) {
+        delete fields[previous];
+      }
+
       if (value === null) {
-        delete result[key];
+        delete spellings[key];
       } else {
-        result[key] = String(value);
+        fields[name] = String(value);
+        spellings[key] = name;
       }
 
       if (key === "content-type") {
-        suppressedContentType = value === null;
+        contentTypeSuppressed = value === null;
       }
     }
   }
 
-  if (bodyPresent && result["content-type"] === undefined && !suppressedContentType) {
-    const contentType = defaultContentType(bodyKind);
+  const contentTypeName = spellings["content-type"];
+  let contentType = contentTypeName === undefined ? undefined : fields[contentTypeName];
+  if (bodyPresent && bodyKind === "multipart" && !unchecked) {
+    if (contentTypeName !== undefined) {
+      delete fields[contentTypeName];
+      contentType = undefined;
+    }
+  } else if (bodyPresent && contentType === undefined && !contentTypeSuppressed) {
+    contentType = defaultContentType(bodyKind);
     if (contentType !== undefined) {
-      result["content-type"] = contentType;
+      fields["content-type"] = contentType;
     }
   }
 
-  contentTypeSuppressed(suppressedContentType);
-
-  return result;
+  return { fields, contentType, contentTypeSuppressed };
 }
 
 export function appendResponseHeader(

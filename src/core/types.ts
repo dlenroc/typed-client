@@ -36,9 +36,14 @@ export type Fields<Value> = Readonly<Record<string, Value | readonly Value[]>> |
 export type QueryInput = string | Fields<FieldScalar>;
 
 /**
- * Header names are case-insensitive. If a name repeats, the client sends
- * the last value. `undefined` allows a default, `null` suppresses it, and
- * `""` sends an empty value.
+ * Request headers by name.
+ *
+ * @remarks
+ * The client sends header names as given. Names that differ only in case
+ * are one header, so the client sends the last spelling and the last
+ * value. k6, Playwright, and HTTP/2 can change the case. `undefined`
+ * allows a default value, `null` suppresses the header and its default,
+ * and `""` sends an empty value.
  */
 export type HeaderInput = Readonly<Record<string, FieldScalar>>;
 

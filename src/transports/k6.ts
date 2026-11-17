@@ -354,18 +354,16 @@ export function k6Transport(
 
     try {
       const input = request.input;
-      let contentTypeSuppressed = false;
-      const selectedHeaders =
+      const selected =
         request.headers === undefined && request.body === undefined
           ? undefined
           : prepareHeaders(
               request.headers,
               request.bodyKind,
               request.body !== undefined,
-              (suppressed) => {
-                contentTypeSuppressed = suppressed;
-              },
+              input?.unchecked === true,
             );
+      const contentTypeSuppressed = selected?.contentTypeSuppressed === true;
 
       let body: RequestBody | null = null;
 
@@ -403,15 +401,14 @@ export function k6Transport(
             );
             body = multipart.body as RequestBody;
 
-            if (selectedHeaders !== undefined && !contentTypeSuppressed) {
-              const supplied = selectedHeaders["content-type"];
-              if (supplied === undefined || input?.unchecked !== true) {
-                if (multipart.contentType !== undefined) {
-                  selectedHeaders["content-type"] = multipart.contentType;
-                } else if (supplied !== undefined) {
-                  delete selectedHeaders["content-type"];
-                }
-              }
+            // The manual encoder chose the boundary, so send its header.
+            if (
+              selected !== undefined &&
+              selected.contentType === undefined &&
+              !contentTypeSuppressed &&
+              multipart.contentType !== undefined
+            ) {
+              selected.fields["content-type"] = multipart.contentType;
             }
             break;
           }
@@ -448,8 +445,8 @@ export function k6Transport(
         params.redirects = 0;
       }
 
-      if (selectedHeaders !== undefined) {
-        params.headers = selectedHeaders;
+      if (selected !== undefined) {
+        params.headers = selected.fields;
       }
 
       prepared = true;
