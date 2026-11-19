@@ -1,6 +1,7 @@
 import http from "k6/http";
 import type { FileData, Params, RequestBody, Response } from "k6/http";
 import type { Endpoint } from "./core/endpoint-types.js";
+import { referenceOf } from "./core/endpoint.js";
 import { AdapterFailure } from "./core/errors.js";
 import type {
   BinaryInput,
@@ -35,30 +36,15 @@ interface K6RequestKinds extends Omit<RequestKindMap, "multipart"> {
 
 type K6Http = Pick<typeof import("k6/http"), "asyncRequest" | "file">;
 
-/** A cookie that k6 parsed from `Set-Cookie`, with the k6 field names. */
-interface K6Cookie {
-  readonly name: string;
-  readonly value: string;
-  readonly domain: string;
-  readonly path: string;
-  readonly http_only: boolean;
-  readonly secure: boolean;
-  readonly max_age: number;
-  readonly expires: number;
-}
-
 /**
- * The k6 response as k6 gives it. `@types/k6` names two cookie fields
- * `httpOnly` and `maxAge`, and its `tls_cipher_suite` type has no `""`.
+ * The k6 response as k6 gives it. The `tls_cipher_suite` type of
+ * `@types/k6` has no `""`.
  */
-type K6Response = Omit<Response, "cookies" | "tls_cipher_suite"> & {
-  readonly cookies: Readonly<Record<string, readonly K6Cookie[]>>;
+type K6Response = Omit<Response, "tls_cipher_suite"> & {
   readonly tls_cipher_suite: Response["tls_cipher_suite"] | "";
 };
 
 export interface K6ResponseMetadata {
-  /** Parsed `Set-Cookie` values by cookie name. */
-  readonly cookies: K6Response["cookies"];
   readonly timings: K6Response["timings"];
   readonly proto: K6Response["proto"];
   readonly remote_ip: K6Response["remote_ip"];
@@ -192,7 +178,8 @@ function k6Multipart(
 ): { body: Record<string, unknown> | string | ArrayBuffer; contentType?: string } {
   const nativeParts: Record<string, K6Part> = Object.create(null);
   const fieldNames: string[] = [];
-  let manualEncoder = forceManual ? manualMultipart() : undefined;
+  // k6 turns a multipart object into an unordered Go map.
+  let manualEncoder = forceManual || Array.isArray(body) ? manualMultipart() : undefined;
   let containsFile = false;
 
   // Replay the parts collected so far into a manual encoder.
@@ -277,18 +264,10 @@ class K6ResponseHandle implements TransportResponse<ResponseKindMap, K6ResponseM
 
     this.headers = headers;
 
-    // The native `cookies` and `timings` objects retain the response body.
-    // The cookie lists do not retain it, so a new record reuses them.
-    const nativeCookies = native.cookies;
-    const cookies: Record<string, readonly K6Cookie[]> = Object.create(null);
-    for (const name in nativeCookies) {
-      cookies[name] = nativeCookies[name]!;
-    }
-
+    // The native `timings` object retains the response body.
     const timings = native.timings;
 
     this.transport = {
-      cookies,
       timings: {
         blocked: timings.blocked,
         connecting: timings.connecting,
@@ -357,22 +336,22 @@ class K6ResponseHandle implements TransportResponse<ResponseKindMap, K6ResponseM
 
 type CaptureMode = "none" | "text" | "binary";
 
-function captureMode(endpoint: Endpoint): CaptureMode {
-  const responses = endpoint.responses;
-  const statuses = Object.keys(responses);
+function captureKind(endpoint: Endpoint, status: number | string): CaptureMode {
+  const kind = endpoint.responses[status as `${number}`]?.body.kind;
+  if (kind === undefined || kind === "none") return "none";
+  return kind === "binary" || kind === "multipart" ? "binary" : "text";
+}
+
+function captureMode(endpoint: Endpoint, status: number | readonly number[] | undefined): CaptureMode {
+  if (typeof status === "number") return captureKind(endpoint, status);
+
+  const statuses = status ?? Object.keys(endpoint.responses);
   let mode: CaptureMode = "none";
-
-  for (let i = 0; i < statuses.length; i++) {
-    const kind = responses[statuses[i] as `${number}`]!.body.kind;
-    if (kind === "binary" || kind === "multipart") {
-      return "binary";
-    }
-
-    if (kind !== "none") {
-      mode = "text";
-    }
+  for (const accepted of statuses) {
+    const candidate = captureKind(endpoint, accepted);
+    if (candidate === "binary") return candidate;
+    if (candidate === "text") mode = candidate;
   }
-
   return mode;
 }
 
@@ -391,7 +370,8 @@ export type K6Transport = Transport<
  * Use k6 2.2 or later and add `@types/k6` for TypeScript. k6 does not
  * load npm packages directly. Bundle the script first. The transport
  * captures response bodies only for the expected response kinds.
- * Multipart fields accept `http.file()` values.
+ * Multipart fields accept `http.file()` values. Read response cookies
+ * from k6's cookie jar, `http.cookieJar().cookiesForURL(url)`.
  *
  * @example
  * ```ts
@@ -419,6 +399,9 @@ export function k6Transport(
 ): K6Transport {
   const httpApi = config.http ?? http;
   const resolveUrl = createUrlResolver(config.baseUrl);
+
+  // One callback for each `status` value, so k6 does not create one per call.
+  const expectedCallbacks = new Map<number | string, Params["responseCallback"]>();
 
   return async (request) => {
     const url = resolveUrl(request);
@@ -486,10 +469,21 @@ export function k6Transport(
         }
       }
 
-      const responseType = request.discard ? "none" : captureMode(request.endpoint);
+      const responseType = request.discard ? "none" : captureMode(request.endpoint, request.status);
       const native = request.options;
       const params: Record<string, unknown> =
         native === undefined ? { responseType } : { ...native, headers: undefined, responseType };
+
+      // k6 groups metrics by the `name` tag, which defaults to the URL. The
+      // template keeps one series per endpoint for all parameter values.
+      const tags = native?.tags;
+      if (tags?.name === undefined) {
+        const template = request.endpoint.template;
+        params.tags = {
+          ...tags,
+          name: resolveUrl({ url: template, reference: referenceOf(template) }),
+        };
+      }
 
       if (request.timeout !== undefined && params.timeout === undefined) {
         params.timeout = request.timeout;
@@ -499,12 +493,44 @@ export function k6Transport(
         params.redirects = 0;
       }
 
+      // k6 marks a request as failed by its status. The statuses that the
+      // call accepts are not failures.
+      const status = request.status;
+      if (status !== undefined && params.responseCallback === undefined) {
+        const key = typeof status === "number" ? status : status.join(",");
+        let callback = expectedCallbacks.get(key);
+        if (callback === undefined) {
+          callback =
+            typeof status === "number"
+              ? http.expectedStatuses(status)
+              : http.expectedStatuses(...status);
+          expectedCallbacks.set(key, callback);
+        }
+
+        params.responseCallback = callback;
+      }
+
       if (selected !== undefined) {
         params.headers = selected.fields;
       }
 
       prepared = true;
       const response = await httpApi.asyncRequest(request.method, url, body, params as Params);
+
+      // k6 returns a failed request as status 0 instead of throwing. Its
+      // code 1050 is a timeout.
+      if (response.status === 0) {
+        const error = new Error(response.error || "Request failed") as Error & {
+          code: number;
+        };
+        error.code = response.error_code;
+        if (response.error_code === 1050) {
+          error.name = "TimeoutError";
+        }
+
+        throw error;
+      }
+
       return new K6ResponseHandle(response as unknown as K6Response);
     } catch (failure) {
       throw new AdapterFailure(prepared ? "transport" : "request", url, failure);

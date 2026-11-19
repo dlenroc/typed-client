@@ -152,7 +152,8 @@ await upload({
 File values accept `data`, `filename?`, and `mediaType?`. The defaults are
 `blob` and `application/octet-stream`. A binary view sends its selected byte
 range. Fetch and Playwright accept `FormData` as the body. k6 accepts
-`http.file()` values as fields.
+`http.file()` values as fields. On k6, use `[name, value]` pairs when part
+order matters, for example when an upload requires the file to come last.
 
 Headers accept a record. The client sends header names as given. Names that
 differ only in case are one header, so the client sends the last spelling and
@@ -437,7 +438,25 @@ export default async function () {
 }
 ```
 
-Read parsed response cookies from `transport.cookies`.
+k6 groups metrics by the `name` tag. The transport sets it to the endpoint
+template joined with `baseUrl`, for example
+`https://api.example.test/v1/users/{id}`, so all parameter values share one
+series. A `name` in `transport: { tags }` wins.
+
+k6 itself joins repeated `Set-Cookie` values with `", "`, which a comma in
+`Expires` makes ambiguous. Read live cookies that match the URL from k6's cookie jar,
+`http.cookieJar().cookiesForURL(url)`.
+
+k6 counts a response as failed in `http_req_failed` by its status. If the call
+sets `status`, the transport sets `responseCallback` to
+`http.expectedStatuses` of those statuses, so `status: 404` is not a failure.
+k6 counts each redirect hop separately. With `follow: true, status: 200`,
+a 302 followed by a 200 returns the 200 to the caller, and k6 counts the
+302 as failed. A `responseCallback` in `transport` wins.
+
+k6 reports a failed request as status 0. The transport throws it as an error
+with the k6 `error_code` as `code`, so the call fails with the code
+`transport`. The k6 timeout code, 1050, gives the code `timeout`.
 
 See [Loading npm packages in k6](https://grafana.com/docs/k6/latest/using-k6/modules/#use-nodejs-modules).
 

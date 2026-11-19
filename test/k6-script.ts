@@ -10,14 +10,19 @@ const completed = new Counter("completed");
 export const options = {
   vus: 1,
   iterations: 1,
-  thresholds: { checks: ["rate==1"], completed: ["count==1"] },
+  thresholds: {
+    checks: ["rate==1"],
+    completed: ["count==1"],
+    "http_req_failed{name:expected}": ["rate==0"],
+    "http_req_failed{name:unexpected}": ["rate==1"],
+  },
 };
 
 const adapter = k6Transport({ baseUrl: __ENV.BASE_URL! });
 
 async function jsonRequests() {
   let nativeTimings: Response["timings"] | undefined;
-  let nativeCookies: Response["cookies"] | undefined;
+  const nativeTags: (Record<string, string> | undefined)[] = [];
   const post = c.bind(
     c.endpoint("/echo", {
       method: "POST",
@@ -31,9 +36,9 @@ async function jsonRequests() {
         async asyncRequest<Kind extends ResponseType | undefined>(
           ...args: Parameters<typeof http.asyncRequest<Kind>>
         ) {
+          nativeTags.push(args[3]?.tags as Record<string, string> | undefined);
           const response = await http.asyncRequest<Kind>(...args);
           nativeTimings = response.timings;
-          nativeCookies = response.cookies;
           return response;
         },
       },
@@ -51,15 +56,13 @@ async function jsonRequests() {
       timings !== nativeTimings &&
       timings?.duration === nativeTimings.duration,
   });
-  check(json.transport?.cookies, {
-    // k6 returns a new `cookies` wrapper on each access, but the same cookie
-    // objects, so the copy keeps them by reference.
-    "cookies keep the parsed k6 cookie objects": (cookies) =>
-      cookies !== undefined &&
-      (cookies.a?.[0] as unknown) === nativeCookies?.a?.[0] &&
-      cookies.a?.[0]?.value === "1" &&
-      cookies.a[0].http_only === false &&
-      cookies.b?.[0]?.value === "2",
+
+  await post({ body: null, transport: { tags: { name: "custom", step: "two" } } });
+  check(nativeTags, {
+    "the resolved template names the metric": (tags) =>
+      tags[0]?.name === `${__ENV.BASE_URL!}/echo`,
+    "a name tag of the caller wins": (tags) =>
+      tags[1]?.name === "custom" && tags[1].step === "two",
   });
 }
 
@@ -155,6 +158,26 @@ async function multipartRequests() {
     });
   }
 
+  for (const repeated of [false, true]) {
+    const parts = [
+      ["z-first", "café"],
+      ["a-file", file],
+      [repeated ? "z-first" : "m-last", "雪"],
+    ] as const;
+    const result = await upload({ body: parts });
+    const wireParts = Array.from(
+      result.body.body.matchAll(/Content-Disposition: form-data; name="([^"]+)"[^\r]*\r\n(?:Content-Type:[^\r]*\r\n)?\r\n([^\r]*)\r\n/gi),
+      ([, name, value]) => [name, value],
+    );
+
+    check(wireParts, {
+      [`ordered multipart pairs preserve names and bytes (repeated: ${repeated})`]: (actual) =>
+        JSON.stringify(actual) === JSON.stringify([
+          ["z-first", "café"], ["a-file", "AB"], [repeated ? "z-first" : "m-last", "雪"],
+        ]),
+    });
+  }
+
   const nativeFile = await upload({
     body: [
       ["file", http.file("café", "note.txt", "text/plain")],
@@ -225,12 +248,33 @@ async function responseDecoding() {
   });
 
   const refused = c.bind(c.endpoint("http://127.0.0.1:1/", { responses: {} }), adapter);
-  check(await refused({ status: 0 }), {
-    "a connection error has status 0 and no cookies": (value) =>
-      value.status === 0 &&
-      value.transport !== undefined &&
-      Object.keys(value.transport.cookies).length === 0,
-  });
+  const slow = c.bind(c.endpoint("/slow", { responses: { 200: c.json() } }), adapter);
+  for (const [name, call, code] of [
+    ["a refused connection", () => refused({ status: 200 }), "transport"],
+    ["a timeout", () => slow({ timeout: 50 }), "timeout"],
+  ] as const) {
+    const error = await call().then(() => undefined, (cause: unknown) => cause);
+    check(error, {
+      [`${name} is a ${code} error`]: (value) =>
+        value instanceof ClientError && value.code === code,
+      [`${name} keeps the k6 error code`]: (value) =>
+        value instanceof ClientError &&
+        typeof (value.cause as { code?: unknown }).code === "number" &&
+        (code === "transport" || (value.cause as { code: number }).code === 1050),
+    });
+  }
+
+  for (const [name, kind, body] of [
+    ["captured", "text", "{bad"],
+    ["not captured", "none", undefined],
+  ] as const) {
+    const bad = c.bind(c.endpoint("/bad", { responses: { 204: c.kind(kind) } }), adapter);
+    const error = await bad().then(() => undefined, (cause: unknown) => cause);
+    check(error, {
+      [`a status error has the ${name} body`]: (value) =>
+        value instanceof ClientError && value.code === "status" && value.body === body,
+    });
+  }
 
   const empty = c.bind(c.endpoint("/empty", { responses: { 204: c.none() } }), adapter);
   check(await empty(), {
@@ -297,6 +341,47 @@ async function responseDecoding() {
   }
 }
 
+async function expectedStatuses() {
+  const callbacks: unknown[] = [];
+  const capture: unknown[] = [];
+  const missing = c.bind(
+    c.endpoint("/missing", { responses: { 404: c.none(), 201: c.binary() } }),
+    k6Transport({
+      baseUrl: __ENV.BASE_URL!,
+      http: {
+        file: http.file,
+        asyncRequest<Kind extends ResponseType | undefined>(
+          ...args: Parameters<typeof http.asyncRequest<Kind>>
+        ) {
+          callbacks.push(args[3]?.responseCallback);
+          capture.push(args[3]?.responseType);
+          return http.asyncRequest<Kind>(...args);
+        },
+      },
+    }),
+  );
+  const own = http.expectedStatuses(404);
+
+  await missing({ status: 404, transport: { tags: { name: "expected" } } });
+  await missing({ status: [404], transport: { tags: { name: "expected" } } });
+  await missing({ status: 404, transport: { tags: { name: "expected" } } });
+  await missing({ status: 200, transport: { responseCallback: own } }).catch(() => {});
+  await missing({ transport: { tags: { name: "unexpected" } } });
+
+  check(capture, {
+    "a selected bodyless or undeclared status skips capture": (values) =>
+      values.slice(0, 4).every(value => value === "none"),
+    "an omitted status includes declared binary bodies": (values) => values[4] === "binary",
+  });
+  check(callbacks, {
+    "an expected status sets a response callback": (value) => value[0] !== undefined,
+    "the callback is created once per status value": (value) =>
+      value[0] === value[2] && value[0] !== value[1],
+    "a response callback of the caller wins": (value) => value[3] === own,
+    "a call without status sets no callback": (value) => value[4] === undefined,
+  });
+}
+
 export default async function () {
   await jsonRequests();
   await formRequests();
@@ -304,5 +389,6 @@ export default async function () {
   await multipartRequests();
   await redirects();
   await responseDecoding();
+  await expectedStatuses();
   completed.add(1);
 }
