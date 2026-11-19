@@ -83,11 +83,11 @@ export type MultipartResponse = Readonly<
 >;
 
 /**
- * Raw response headers with lowercase names. The native API can combine
- * repeated values.
+ * Response headers with lowercase names. Repeated values are joined with
+ * `", "`, and repeated `Set-Cookie` values with a newline.
  */
 export type ResponseHeaders = {
-  readonly [Name in string]: string | readonly string[] | undefined;
+  readonly [Name in string]: string | undefined;
 };
 
 /** Extend or pick from these request kinds when defining a transport. */
@@ -170,6 +170,12 @@ export interface RequestFields {
 }
 
 /**
+ * How a template or an unchecked path starts. `absolute`: with a scheme.
+ * `network`: with `//`. `path`: all others.
+ */
+export type Reference = "absolute" | "network" | "path";
+
+/**
  * The request that the client prepares for a transport. Treat nested
  * inputs as read-only.
  */
@@ -180,8 +186,14 @@ export interface TransportRequest<
 > {
   method: string;
 
-  /** URL before the transport applies its base URL. */
+  /** The rendered template and query, or the unchecked `path` string. */
   url: string;
+
+  /**
+   * How the written template, or the unchecked `path` string, starts.
+   * Parameter values do not change it.
+   */
+  reference: Reference;
 
   /** See {@link HeaderInput} for `undefined` and `null` values. */
   headers?: HeaderInput | undefined;

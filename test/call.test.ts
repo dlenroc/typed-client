@@ -1,6 +1,7 @@
 import { describe, expect, test, vi } from "vitest";
 import { c } from "@dlenroc/typed-client";
-import { mockTransport, schema } from "./fixtures.ts";
+import { fetchTransport } from "@dlenroc/typed-client/fetch";
+import { mockTransport, recorder, schema, users } from "./fixtures.ts";
 
 describe("endpoint calls", () => {
   test.each(["sync", "async"] as const)(
@@ -270,5 +271,38 @@ describe("call controls", () => {
 
     expect(validateBody).not.toHaveBeenCalled();
     expect(response.read).toHaveBeenCalledExactlyOnceWith("none");
+  });
+});
+
+describe("URLs", () => {
+  test("the written text selects how the base URL applies", async () => {
+    const { sent, transport } = recorder();
+    const api = c.bind(
+      {
+        tenant: c.endpoint("/{tenant}/users", { responses: { 204: "none" } }),
+        other: c.endpoint("https://other.test/users/{id}", { responses: { 204: "none" } }),
+        cdn: c.endpoint("//cdn.test/{file}", { responses: { 204: "none" } }),
+      },
+      transport,
+    );
+    await api.tenant({ path: { tenant: "" } });
+    await api.other({ path: { id: 1 } });
+    await api.cdn({ path: { file: "a" } });
+    await api.tenant({ unchecked: true, path: "/raw" });
+    await api.tenant({ unchecked: true, path: "//host/x" });
+    await api.tenant({ unchecked: true, path: "http://other.test/x" });
+    expect(sent.map((item) => item.url)).toEqual([
+      "https://api.test/v1//users",
+      "https://other.test/users/1",
+      "https://cdn.test/a",
+      "https://api.test/v1/raw",
+      "https://host/x",
+      "http://other.test/x",
+    ]);
+
+    const noBase: string[] = [];
+    const bare = fetchTransport({ fetch: async (url) => (noBase.push(String(url)), new Response(null, { status: 204 })) });
+    await c.bind(users, bare).get({ unchecked: true, path: "//host/x" });
+    expect(noBase).toEqual(["//host/x"]);
   });
 });

@@ -1,13 +1,15 @@
 import { test, vi } from "vitest";
 import { createServer } from "node:http";
 import { once } from "node:events";
-import type {
-  RequestKindMap,
-  ResponseHeaders,
-  ResponseKindMap,
-  TransportRequest,
-  TransportResponse,
+import {
+  c,
+  type RequestKindMap,
+  type ResponseHeaders,
+  type ResponseKindMap,
+  type TransportRequest,
+  type TransportResponse,
 } from "@dlenroc/typed-client";
+import { fetchTransport } from "@dlenroc/typed-client/fetch";
 
 export function schema<Result>(validate: (value: unknown) => Result) {
   type Output = Extract<Awaited<Result>, { value: unknown }>["value"];
@@ -96,6 +98,7 @@ export const testWithServer = test.extend("baseUrl", async ({}, { onCleanup }) =
     } else {
       response.setHeader("content-type", "application/json");
       response.setHeader("set-cookie", ["a=1", "b=2"]);
+      response.setHeader("x-repeated", ["a", "b"]);
       response.end(
         JSON.stringify({
           method: request.method,
@@ -126,3 +129,18 @@ export const testWithServer = test.extend("baseUrl", async ({}, { onCleanup }) =
 
   return `http://127.0.0.1:${address.port}/v1`;
 });
+
+/** A Fetch transport with base URL `https://api.test/v1` that records each request. */
+export function recorder() {
+  const sent: { url: string; headers: unknown; init: RequestInit }[] = [];
+  const transport = fetchTransport({
+    baseUrl: "https://api.test/v1",
+    fetch: async (url, init) => {
+      sent.push({ url: String(url), headers: init?.headers, init: init! });
+      return new Response(null, { status: 204 });
+    },
+  });
+  return { sent, transport };
+}
+
+export const users = { get: c.endpoint("/users/{id}", { responses: { 204: "none" } }) };

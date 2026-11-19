@@ -8,11 +8,15 @@ import type {
   MultipartResponse,
   MultipartResponseValue,
   QueryInput,
+  Reference,
   UrlEncodedResponse,
 } from "./core/types.js";
 
 // Shared by the built-in transports: URLs, headers, request encoding, and
 // response decoding.
+
+/** The scheme at the start of an absolute URL, with its colon. */
+export const urlScheme = /^[A-Za-z][A-Za-z0-9+.-]*:/;
 
 export function appendQuery(url: string, query: QueryInput | undefined) {
   if (query === undefined) {
@@ -36,20 +40,25 @@ export function appendQuery(url: string, query: QueryInput | undefined) {
   return prefix + separator + queryString + fragment;
 }
 
-export function createUrlResolver(baseUrl: string | undefined): (path: string) => string {
-  if (baseUrl === undefined) {
-    return (path) => path;
-  }
+/**
+ * Join a base URL and the URL of a request.
+ *
+ * @remarks
+ * `path`: the base URL is a prefix. `network`: the scheme of the base
+ * URL is a prefix. `absolute`: the URL is sent as written.
+ */
+export function createUrlResolver(
+  baseUrl: string | undefined,
+): (request: { readonly url: string; readonly reference: Reference }) => string {
+  const base = baseUrl ?? "";
+  const scheme = urlScheme.exec(base)?.[0] ?? "";
 
-  const prefix = baseUrl.replace(/\/+$/, "");
-
-  return (path) => {
-    if (path.charCodeAt(0) === 47) {
-      return path.charCodeAt(1) === 47 ? path : prefix + path;
-    }
-
-    return /^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(path) ? path : prefix + "/" + path;
-  };
+  return (request) =>
+    request.reference === "path"
+      ? base + request.url
+      : request.reference === "network"
+        ? scheme + request.url
+        : request.url;
 }
 
 function defaultContentType(bodyKind: string) {
@@ -152,15 +161,22 @@ export function appendValue<Value>(
 }
 
 /**
- * Add a response header under its lowercase name. A repeated header
- * collects its values in an array.
+ * Add a response header under its lowercase name. A repeated header joins
+ * its values with `", "`, which HTTP treats as the same. `Set-Cookie`
+ * values can contain commas, so they are joined with a newline.
  */
 export function appendResponseHeader(
-  target: Record<string, string | string[]>,
+  target: Record<string, string>,
   name: string,
   value: string,
 ): void {
-  appendValue(target, name.toLowerCase(), value);
+  const key = name.toLowerCase();
+  const previous = target[key];
+
+  target[key] =
+    previous === undefined
+      ? value
+      : previous + (key === "set-cookie" ? "\n" : ", ") + value;
 }
 
 /** The bytes of a binary input as a `Uint8Array`, without a copy. */
@@ -379,9 +395,8 @@ function parameterValue(match: RegExpExecArray) {
 
 export function decodeMultipart(
   bytes: Uint8Array,
-  contentType: string | readonly string[] | undefined,
+  header: string | undefined,
 ): MultipartResponse {
-  const header = typeof contentType === "string" ? contentType : contentType?.[0];
   let boundaryValue: string | undefined;
 
   if (header !== undefined) {

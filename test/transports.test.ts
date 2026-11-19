@@ -70,7 +70,7 @@ describe.each(overHttp)("$name over HTTP", ({ create }) => {
     });
   });
 
-  testHttp("send Unicode JSON and preserve separate response cookies", async ({ echo }) => {
+  testHttp("send Unicode JSON and join repeated response headers", async ({ echo }) => {
     const result = await echo.json({
       body: { name: "café" },
       headers: { "x-team": "identity" },
@@ -82,7 +82,8 @@ describe.each(overHttp)("$name over HTTP", ({ create }) => {
       headers: { "x-team": "identity" },
       body: '{"name":"café"}',
     });
-    expect(result.headers["set-cookie"]).toEqual(["a=1", "b=2"]);
+    expect(result.headers["set-cookie"]).toBe("a=1\nb=2");
+    expect(result.headers["x-repeated"]).toBe("a, b");
   });
 
   testHttp("preserve escaped and repeated query and form fields", async ({ echo }) => {
@@ -558,6 +559,27 @@ describe("Playwright", () => {
     expect(transport?.timing.startTime).toBeGreaterThan(0);
   });
 
+  testWithServer("resolve relative templates under the path of use.baseURL", async ({
+    baseUrl,
+  }) => {
+    const context = await request.newContext({ baseURL: `${baseUrl}/` });
+    onTestFinished(() => context.dispose());
+    const baseURL: string | undefined = undefined;
+    const api = c.bind(
+      {
+        relative: c.endpoint("/echo?a=1", { responses: { 200: c.type<Echo>() } }),
+        absolute: c.endpoint(`${baseUrl}/echo`, { responses: { 200: c.type<Echo>() } }),
+      },
+      playwrightTransport({ context, baseUrl: baseURL }),
+    );
+
+    await expect(api.relative()).resolves.toMatchObject({ body: { url: "/v1/echo?a=1" } });
+    await expect(api.absolute()).resolves.toMatchObject({ body: { url: "/v1/echo" } });
+    await expect(api.relative({ unchecked: true, path: "/v1/echo" })).resolves.toMatchObject({
+      body: { url: "/v1/v1/echo" },
+    });
+  });
+
   testWithServer("decode multipart tokens and padded delimiters", async ({ baseUrl }) => {
     const context = await request.newContext();
     onTestFinished(() => context.dispose());
@@ -595,7 +617,7 @@ describe("Playwright", () => {
     const result = await get({ body: input, timeout: 1234, transport: { maxRetries: 2 } });
 
     expect(send).toHaveBeenCalledExactlyOnceWith(
-      "/bytes",
+      "./bytes",
       expect.objectContaining({ timeout: 1234, maxRedirects: 0, maxRetries: 2 }),
     );
     expect(send.mock.calls[0]?.[1]?.data).toBe(input);

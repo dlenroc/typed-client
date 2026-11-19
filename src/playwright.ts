@@ -4,6 +4,7 @@ import { FailureWithCleanupError, ResponseCleanupError, transportError } from ".
 import type {
   BinaryInput,
   CommonOptions,
+  Reference,
   RequestKindMap,
   ResponseHeaders,
   ResponseKindMap,
@@ -79,7 +80,7 @@ class PlaywrightResponseHandle implements TransportResponse<ResponseKindMap, Pla
 
   static async create(native: APIResponse) {
     try {
-      const headers: Record<string, string | string[]> = Object.create(null);
+      const headers: Record<string, string> = Object.create(null);
       const entries = native.headersArray();
       for (let i = 0; i < entries.length; i++) {
         const entry = entries[i]!;
@@ -193,6 +194,16 @@ function playwrightMultipart(
 }
 
 /**
+ * Playwright resolves a relative URL against `use.baseURL`. A `/` at the
+ * start replaces the path of that URL, so `./` keeps it.
+ */
+function underUseBaseUrl(request: { readonly url: string; readonly reference: Reference }) {
+  return request.reference === "path" && request.url[0] === "/"
+    ? "." + request.url
+    : request.url;
+}
+
+/**
  * Send requests with Playwright and dispose each response after use.
  *
  * @remarks
@@ -227,13 +238,17 @@ export function playwrightTransport(config: {
    */
   readonly context: PlaywrightContext;
 
-  /** Relative endpoints append to this URL's path. */
-  readonly baseUrl?: string;
+  /**
+   * Relative endpoints append to this URL's path. Without it, Playwright
+   * resolves them under `use.baseURL`.
+   */
+  readonly baseUrl?: string | undefined;
 }): Transport<RequestKindMap, ResponseKindMap, PlaywrightNativeOptions, PlaywrightMetadata> {
-  const resolveUrl = createUrlResolver(config.baseUrl);
+  const resolveUrl =
+    config.baseUrl === undefined ? underUseBaseUrl : createUrlResolver(config.baseUrl);
 
   return async (request) => {
-    const url = resolveUrl(request.url);
+    const url = resolveUrl(request);
     let prepared = false;
 
     try {

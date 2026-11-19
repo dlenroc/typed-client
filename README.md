@@ -61,9 +61,24 @@ if (result.status === 200) {
 }
 ```
 
-The built-in transports append relative endpoints to the path in `baseUrl`.
 Both calls use `https://api.example.test/v1/users/42`. `fetchTransport` also
 accepts `fetch`, a replacement for `globalThis.fetch`.
+
+### Base URL
+
+`baseUrl` is a prefix. The transport does not add or remove slashes, so write
+`baseUrl` without a final slash and templates with an initial slash. How the
+base URL applies depends on how the template starts. Parameter values do not
+change it.
+
+| Call, with `baseUrl: "https://api.test/v1"` | Sent                          |
+| ------------------------------------------- | ----------------------------- |
+| Template `/users/{id}`, `id: 7`             | `https://api.test/v1/users/7` |
+| Template `https://other.test/users/{id}`    | `https://other.test/users/7`  |
+| Template `//cdn.test/{file}`, `file: "a"`   | `https://cdn.test/a`          |
+
+A template that starts with `//` keeps its host and gets the scheme of
+`baseUrl`.
 
 ## Bodies
 
@@ -259,14 +274,18 @@ await createUser({
 ```
 
 This sends malformed JSON as raw text and expects HTTP 400. Use a `path`
-string to replace the endpoint path or send the request to an absolute URL.
+string to replace the endpoint path. It follows the same
+[base URL](#base-url) rules as a template, so `"http://other.test/x"` sends
+to another host.
 Declared responses still use their schemas.
 
 ## Responses and errors
 
-Responses contain `status`, `url`, `headers`, and `body`. Raw headers use
-lowercase names and preserve repeated values when the native API exposes them
-separately. The `transport` field carries metadata such as Fetch `redirected`,
+Responses contain `status`, `url`, `headers`, and `body`. Header names are
+lowercase and each value is a string, the same on every transport. Repeated
+values are joined with `", "`, and repeated `Set-Cookie` values with a
+newline, so `headers["set-cookie"]?.split("\n")` gives each cookie. The
+`transport` field carries metadata such as Fetch `redirected`,
 Playwright `serverAddr`, or k6 `timings`.
 
 ```ts
@@ -310,7 +329,8 @@ JSON report.
 ### Playwright
 
 Use Playwright 1.62 or later. Pass Playwright Test's `request` fixture to the
-transport as its `context`.
+transport as its `context`. Playwright sends a binary body with
+`Content-Type: application/octet-stream` unless the call sets one.
 
 ```ts
 import { test } from "@playwright/test";
@@ -318,17 +338,17 @@ import { c } from "@dlenroc/typed-client";
 import { playwrightTransport } from "@dlenroc/typed-client/playwright";
 import { getUser } from "./users.js";
 
-test("get user", async ({ request }) => {
-  const get = c.bind(
-    getUser,
-    playwrightTransport({
-      context: request,
-      baseUrl: "https://api.example.test/v1",
-    }),
-  );
+test("get user", async ({ request, baseURL }) => {
+  const get = c.bind(getUser, playwrightTransport({ context: request, baseUrl: baseURL }));
   await get({ path: { id: 42 }, status: 200 });
 });
 ```
+
+Without `baseUrl`, Playwright resolves relative templates under `use.baseURL`.
+A `use.baseURL` without a final slash drops its last path segment, so
+`https://api.example.test/v1` sends `/users/42` to
+`https://api.example.test/users/42`. Pass `baseURL` as `baseUrl` to keep the
+same [base URL](#base-url) rules as the other transports.
 
 `@playwright/test` already brings in `playwright-core`. If TypeScript reports
 that it cannot find `playwright-core` in the transport's declarations, install
@@ -363,8 +383,8 @@ export default async function () {
 }
 ```
 
-k6 joins repeated `Set-Cookie` headers into one value. Read the parsed cookies
-from `transport.cookies`.
+k6 itself joins repeated `Set-Cookie` values with `", "`, which a comma in
+`Expires` makes ambiguous. Read the parsed cookies from `transport.cookies`.
 
 See [Loading npm packages in k6](https://grafana.com/docs/k6/latest/using-k6/modules/#use-nodejs-modules).
 
@@ -392,6 +412,9 @@ await ping();
 - Read native options from `request.input`.
 - To support `timeout` and `follow`, add `CommonOptions` to the transport's
   options and apply them from `request.input`.
+- Apply `request.url` by `request.reference`: for `path`, prefix it with your
+  base URL; for `network`, prefix it with the scheme of your base URL; for
+  `absolute`, send it as written.
 - Release buffered resources in `read()`. This includes `read("none")`, which
   the client calls to skip decoding.
 - If resources can stay live after `read()`, for example a returned stream,

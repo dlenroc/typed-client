@@ -1,4 +1,5 @@
-import type { StandardSchemaV1 } from "./types.js";
+import { urlScheme } from "../http.js";
+import type { Reference, StandardSchemaV1 } from "./types.js";
 import type {
   Endpoint,
   EndpointDefinition,
@@ -63,6 +64,15 @@ export function renderPath(plan: PathPlan, params: unknown): string {
   }
 
   return url;
+}
+
+/** Classify the written text of a template or of an unchecked path. */
+export function referenceOf(text: string): Reference {
+  if (text.startsWith("/")) {
+    return text.startsWith("//") ? "network" : "path";
+  }
+
+  return urlScheme.test(text) ? "absolute" : "path";
 }
 
 const typeMarker = Object.freeze({});

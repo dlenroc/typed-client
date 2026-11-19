@@ -14,6 +14,7 @@ import type {
   TransportResponse,
 } from "./core/types.js";
 import {
+  appendResponseHeader,
   asBytes,
   createUrlResolver,
   defaultFileMediaType,
@@ -255,34 +256,6 @@ function k6Multipart(
   return { body: nativeParts };
 }
 
-function normalizeHeaders(source: Record<string, string | readonly string[]>): ResponseHeaders {
-  const target: Record<string, string | readonly string[]> = Object.create(null);
-
-  for (const name in source) {
-    const key = name.toLowerCase();
-    const value = source[name]!;
-    const previous = target[key];
-
-    if (previous === undefined) {
-      target[key] = value;
-    } else {
-      const combined = typeof previous === "string" ? [previous] : [...previous];
-      if (typeof value === "string") {
-        combined.push(value);
-      } else {
-        for (let i = 0; i < value.length; i++) {
-          const part = value[i]!;
-          combined.push(part);
-        }
-      }
-
-      target[key] = combined;
-    }
-  }
-
-  return target;
-}
-
 class K6ResponseHandle implements TransportResponse<ResponseKindMap, K6ResponseMetadata> {
   readonly status: number;
   readonly url: string;
@@ -293,7 +266,18 @@ class K6ResponseHandle implements TransportResponse<ResponseKindMap, K6ResponseM
   constructor(private readonly native: K6Response) {
     this.status = native.status;
     this.url = native.url;
-    this.headers = normalizeHeaders(native.headers);
+
+    // k6 joins repeated values itself and gives canonical names, for example
+    // `Content-Type`.
+    const nativeHeaders = native.headers;
+    const names = Object.keys(nativeHeaders);
+    const headers: Record<string, string> = Object.create(null);
+    for (let i = 0; i < names.length; i++) {
+      const name = names[i]!;
+      appendResponseHeader(headers, name, nativeHeaders[name]!);
+    }
+
+    this.headers = headers;
 
     // The native `cookies` and `timings` objects retain the response body.
     // The cookie lists do not retain it, so a new record reuses them.
@@ -410,7 +394,7 @@ export function k6Transport(
   const resolveUrl = createUrlResolver(config.baseUrl);
 
   return async (request) => {
-    const url = resolveUrl(request.url);
+    const url = resolveUrl(request);
     let prepared = false;
 
     try {

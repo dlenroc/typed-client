@@ -86,8 +86,8 @@ class FetchResponseHandle implements TransportResponse<FetchResponseKinds, Fetch
     this.url = native.url;
     this.transport = { redirected: native.redirected, type: native.type };
 
-    // Iteration gives each Set-Cookie value separately.
-    const headers: Record<string, string | string[]> = Object.create(null);
+    // Fetch joins repeated values, except Set-Cookie.
+    const headers: Record<string, string> = Object.create(null);
     for (const [name, value] of native.headers) {
       appendResponseHeader(headers, name, value);
     }
@@ -207,7 +207,7 @@ export function fetchTransport(
   }
 
   return async (request) => {
-    const url = resolveUrl(request.url);
+    const url = resolveUrl(request);
     let prepared = false;
 
     try {

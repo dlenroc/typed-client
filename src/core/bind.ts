@@ -1,7 +1,7 @@
 import { appendQuery } from "../http.js";
 import type { BoundContract, EndpointTree, ValidateBinding } from "./bind-types.js";
 import type { Endpoint } from "./endpoint-types.js";
-import { renderPath } from "./endpoint.js";
+import { referenceOf, renderPath } from "./endpoint.js";
 import {
   ClientError,
   failureCause,
@@ -14,6 +14,7 @@ import type {
   AnyTransport,
   HeaderInput,
   QueryInput,
+  Reference,
   StandardIssue,
   StandardSchemaV1,
   Transport,
@@ -198,12 +199,18 @@ async function call(
   }
 
   let url: string;
+  let reference: Reference;
 
   try {
-    url = appendQuery(
-      unchecked && typeof path === "string" ? path : renderPath(endpoint.path, path),
-      query as QueryInput | undefined,
-    );
+    if (unchecked && typeof path === "string") {
+      reference = referenceOf(path);
+      url = appendQuery(path, query as QueryInput | undefined);
+    } else {
+      // The first literal part is the start of the written template.
+      const plan = endpoint.path;
+      reference = referenceOf(typeof plan === "string" ? plan : plan.parts[0]!);
+      url = appendQuery(renderPath(plan, path), query as QueryInput | undefined);
+    }
   } catch (cause) {
     throw new ClientError({
       code: "request",
@@ -219,6 +226,7 @@ async function call(
   const transportRequest: TransportRequest = {
     method,
     url,
+    reference,
     headers: headers as HeaderInput | undefined,
     bodyKind: bodyKind as TransportRequest["bodyKind"],
     body: body as TransportRequest["body"],
