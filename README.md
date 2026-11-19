@@ -273,6 +273,9 @@ browser, Fetch reports an unfollowed redirect as status 0.
 
 `transport` accepts the native request options, except the method, headers,
 and body, which the client sets. A native redirect option overrides `follow`.
+Fetch drains discarded bodies chunk by chunk to allow connection reuse. It cancels
+`text/event-stream` bodies on discard because they can stay open indefinitely.
+Use `timeout` or a signal to bound other slow responses.
 On k6, a native `timeout` overrides `timeout`. On Fetch, the client combines a
 native `signal` with `timeout`. Use a positive number for a portable deadline.
 Zero disables the Playwright timeout and can expire immediately on Fetch and k6.
@@ -344,22 +347,36 @@ try {
 }
 ```
 
-| Code        | When it occurs                                                                    | Fields                       |
-| ----------- | --------------------------------------------------------------------------------- | ---------------------------- |
-| `request`   | Nothing was sent because the call input, URL, preparation, or a schema failed.    | `schema`, `issues`           |
-| `transport` | The transport or a decorator failed, or a response could not be released.         | `status` if any              |
-| `status`    | The status falls outside the accepted set.                                        | `status`                     |
-| `response`  | The body cannot be decoded, or a response schema rejects the response.            | `status`, `schema`, `issues` |
+| Code        | When it occurs                                                                 | Fields                                          |
+| ----------- | ------------------------------------------------------------------------------ | ----------------------------------------------- |
+| `request`   | Nothing was sent because the call input, URL, preparation, or a schema failed. | `schema`, `issues`                              |
+| `transport` | The transport failed to deliver or release the response.                      | `status` if any                                 |
+| `timeout`   | Sending or reading the response timed out.                                    | `status` if received                            |
+| `status`    | The status falls outside the accepted set.                                     | `status`, `headers`, `body`                     |
+| `response`  | The body cannot be decoded, or a response schema rejects the response.         | `status`, `schema`, `issues`, `headers`, `body` |
 
 Every `ClientError` includes `method`, `meta`, and `cause`. `url` is set when
 available. `schema` names the schema that failed: `path`, `query`, `headers`,
 or `body`. That schema either reported `issues` or threw `cause`. A `response`
 error without `schema` means the body could not be decoded.
 
-The message names the method and the URL when the URL is known. It lists up to
+`status` and `response` errors have the raw response `headers`. A `status`
+error reads the body as text if the `Content-Type` is JSON, XML, text,
+URL-encoded, or absent. Its `body` is that text, or `undefined` for other types
+or if the body cannot be read. Fetch buffers the full diagnostic text for
+assertions. Use `discard: true` to skip capture or `timeout` to limit the
+wait for a slow or open response. k6 captures bodies according to the accepted
+response declarations and skips capture with `discard: true`.
+For a `response` error, `body` is the decoded value that the body schema
+rejected. It is `undefined` if the body could not be decoded or the headers
+schema failed. Other errors have no `headers` and no `body`.
+
+The message names the method and the URL. If the URL is not built yet, it names
+the endpoint template, for example `POST /users/{id}`. It lists up to
 10 issues, one per line, or gives the first line of the cause and of its cause.
-It leaves out URL credentials. The `url` and `cause` fields keep the full
-values.
+A `status` error message adds the first 1000 characters of its text body on a
+new line. The message leaves out URL credentials. The `url` and `cause` fields
+keep the full values.
 
 If cleanup fails as well, `cleanupError` holds the secondary failure.
 
@@ -454,11 +471,14 @@ See `TransportRequest` for the prepared fields and `TransportResponse` for the r
 - Apply `request.url` by `request.reference`: for `path`, prefix it with your
   base URL; for `network`, prefix it with the scheme of your base URL; for
   `absolute`, send it as written.
-- An error that a transport throws becomes a `ClientError` with the code
-  `transport`, and the error is kept as `cause`.
+- Bound calls expose `ClientError`. A wrapper that catches a failure from a
+  built-in transport receives a lower-level error with the original `cause`.
+  A custom transport can throw an error named `TimeoutError` to report a timeout.
 - Release buffered resources in `read()`. This includes `read("none")`, which
   the client calls to skip decoding.
-- For an unexpected status, the client calls `read("none")`.
+- For a status outside the accepted set, the client calls `read("text")` if
+  the `Content-Type` is textual or absent. Return `undefined` when diagnostic
+  text is unavailable. Explicit discard and other content types use `read("none")`.
 - If resources can stay live after `read()`, for example a returned stream,
   implement `discard()`. The client calls it when a schema rejects the value
   that `read()` returned.

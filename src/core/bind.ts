@@ -4,11 +4,13 @@ import type { Endpoint } from "./endpoint-types.js";
 import { compilePath, type PathPlan, referenceOf, renderPath } from "./endpoint.js";
 import {
   ClientError,
+  transportError,
+  type ClientErrorFields,
   failureCause,
+  isTimeoutError,
   preserveCleanupError,
   ResponseCleanupError,
   schemaError,
-  transportError,
 } from "./errors.js";
 import { isRaw, rawParts } from "./raw.js";
 import type {
@@ -116,6 +118,57 @@ function cleanHeaders(
   return kept;
 }
 
+// A status error reads these types, or a body without a type, as text.
+const textualType =
+  /^\s*(?:text\/|application\/(?:[^;\s]*\+)?(?:json|xml|x-www-form-urlencoded)\s*(?:;|$))/i;
+
+/**
+ * Release the response of a status error. Read the body as text if its
+ * type is textual. If that read fails, the body is `undefined`, and only a
+ * failed release sets `cleanupError`.
+ */
+async function rejectStatus(
+  handle: TransportResponse<any, any>,
+  discard: boolean,
+  fields: Omit<ClientErrorFields, "headers" | "body">,
+): Promise<never> {
+  const headers = handle.headers;
+  const contentType = headers["content-type"];
+  const textual = !discard && (contentType === undefined || textualType.test(contentType));
+  let body: string | undefined;
+  let readFailed = false;
+  let readFailure: unknown;
+
+  try {
+    if (textual) {
+      const text: unknown = await handle.read("text");
+      if (typeof text === "string") {
+        body = text;
+      }
+    } else {
+      await handle.read("none");
+    }
+  } catch (failure) {
+    readFailed = true;
+    readFailure = failure;
+  }
+
+  const error = new ClientError({ ...fields, headers, body });
+
+  if (readFailed) {
+    const cause = failureCause(readFailure);
+    if (cause instanceof ResponseCleanupError) {
+      error.cleanupError = cause.cause;
+    } else if (!textual) {
+      error.cleanupError = readFailure;
+    } else {
+      preserveCleanupError(error, readFailure);
+    }
+  }
+
+  throw error;
+}
+
 async function rejectResponse(
   handle: TransportResponse<any, any>,
   primary: ClientError,
@@ -128,7 +181,7 @@ async function rejectResponse(
       await handle.discard();
     }
   } catch (cleanupError) {
-    primary.cleanupError = cleanupError;
+    primary.cleanupError = cleanupError instanceof ResponseCleanupError ? cleanupError.cause : cleanupError;
   }
 
   throw primary;
@@ -156,6 +209,7 @@ async function call(
       code: "request",
       summary: "Invalid call input",
       method,
+      template: endpoint.template,
       meta,
       cause: new TypeError("status must not be empty"),
     });
@@ -201,7 +255,16 @@ async function call(
     }
 
     if (!result.ok) {
-      throw schemaError(method, undefined, meta, undefined, "path", result.issues, result.cause);
+      throw schemaError(
+        method,
+        undefined,
+        endpoint.template,
+        meta,
+        undefined,
+        "path",
+        result.issues,
+        result.cause,
+      );
     }
 
     path = result.value;
@@ -214,7 +277,16 @@ async function call(
     }
 
     if (!result.ok) {
-      throw schemaError(method, undefined, meta, undefined, "query", result.issues, result.cause);
+      throw schemaError(
+        method,
+        undefined,
+        endpoint.template,
+        meta,
+        undefined,
+        "query",
+        result.issues,
+        result.cause,
+      );
     }
 
     query = result.value;
@@ -230,6 +302,7 @@ async function call(
       throw schemaError(
         method,
         undefined,
+        endpoint.template,
         meta,
         undefined,
         "headers",
@@ -248,7 +321,16 @@ async function call(
     }
 
     if (!result.ok) {
-      throw schemaError(method, undefined, meta, undefined, "body", result.issues, result.cause);
+      throw schemaError(
+        method,
+        undefined,
+        endpoint.template,
+        meta,
+        undefined,
+        "body",
+        result.issues,
+        result.cause,
+      );
     }
 
     body = result.value;
@@ -270,6 +352,7 @@ async function call(
       code: "request",
       summary: "Cannot build request URL",
       method,
+      template: endpoint.template,
       meta,
       cause,
     });
@@ -303,12 +386,7 @@ async function call(
   try {
     handle = await transport(transportRequest);
   } catch (failure) {
-    // A transport raises this call's own error with the endpoint's metadata.
-    if (failure instanceof ClientError && failure.meta === meta) {
-      throw failure;
-    }
-
-    throw transportError("transport", transportRequest, failure);
+    throw transportError(transportRequest, failure);
   }
 
   const responseUrl = handle.url;
@@ -326,17 +404,14 @@ async function call(
       ? expectedStatus.join(", ")
       : (expectedStatus ?? Object.keys(endpoint.responses).join(", "));
 
-    return rejectResponse(
-      handle,
-      new ClientError({
-        code: "status",
-        summary: `Unexpected status ${status} (expected ${expected})`,
-        method,
-        url: responseUrl,
-        meta,
-        status,
-      }),
-    );
+    return rejectStatus(handle, discard, {
+      code: "status",
+      summary: `Unexpected status ${status} (expected ${expected})`,
+      method,
+      url: responseUrl,
+      meta,
+      status,
+    });
   }
 
   let responseHeaders: unknown = handle.headers;
@@ -350,7 +425,17 @@ async function call(
     if (!result.ok) {
       return rejectResponse(
         handle,
-        schemaError(method, responseUrl, meta, status, "headers", result.issues, result.cause),
+        schemaError(
+          method,
+          responseUrl,
+          endpoint.template,
+          meta,
+          status,
+          "headers",
+          result.issues,
+          result.cause,
+          handle.headers,
+        ),
       );
     }
 
@@ -364,6 +449,17 @@ async function call(
     responseBody = await handle.read(kind);
   } catch (failure) {
     const cause = failureCause(failure);
+    if (isTimeoutError(cause)) {
+      throw preserveCleanupError(new ClientError({
+        code: "timeout",
+        summary: "Timed out reading response",
+        method,
+        url: responseUrl,
+        meta,
+        status,
+        cause,
+      }), failure);
+    }
     const cleanupFailed = cause instanceof ResponseCleanupError;
     const released = kind === "none" || cleanupFailed;
     throw preserveCleanupError(
@@ -376,6 +472,7 @@ async function call(
         url: responseUrl,
         meta,
         status,
+        headers: released ? undefined : handle.headers,
         cause: cleanupFailed ? cause.cause : cause,
       }),
       failure,
@@ -391,7 +488,18 @@ async function call(
     if (!result.ok) {
       return rejectResponse(
         handle,
-        schemaError(method, responseUrl, meta, status, "body", result.issues, result.cause),
+        schemaError(
+          method,
+          responseUrl,
+          endpoint.template,
+          meta,
+          status,
+          "body",
+          result.issues,
+          result.cause,
+          handle.headers,
+          responseBody,
+        ),
         true,
       );
     }

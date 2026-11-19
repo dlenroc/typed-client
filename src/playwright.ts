@@ -1,6 +1,6 @@
 import { Buffer } from "node:buffer";
 import type { APIRequestContext, APIResponse } from "playwright-core";
-import { FailureWithCleanupError, ResponseCleanupError, transportError } from "./core/errors.js";
+import { FailureWithCleanupError, ResponseCleanupError, AdapterFailure } from "./core/errors.js";
 import type {
   BinaryInput,
   Reference,
@@ -84,7 +84,6 @@ class PlaywrightResponseHandle implements TransportResponse<ResponseKindMap, Pla
         appendResponseHeader(headers, entry.name, entry.value);
       }
 
-      // Two independent driver round-trips.
       const [serverAddr, securityDetails] = await Promise.all([
         native.serverAddr(),
         native.securityDetails(),
@@ -327,7 +326,7 @@ export function playwrightTransport(config: {
       prepared = true;
       return await PlaywrightResponseHandle.create(await config.context.fetch(url, options));
     } catch (failure) {
-      throw transportError(prepared ? "transport" : "request", request, failure, url);
+      throw new AdapterFailure(prepared ? "transport" : "request", url, failure);
     }
   };
 }

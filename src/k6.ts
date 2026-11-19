@@ -1,7 +1,7 @@
 import http from "k6/http";
 import type { FileData, Params, RequestBody, Response } from "k6/http";
 import type { Endpoint } from "./core/endpoint-types.js";
-import { transportError } from "./core/errors.js";
+import { AdapterFailure } from "./core/errors.js";
 import type {
   BinaryInput,
   Fields,
@@ -507,7 +507,7 @@ export function k6Transport(
       const response = await httpApi.asyncRequest(request.method, url, body, params as Params);
       return new K6ResponseHandle(response as unknown as K6Response);
     } catch (failure) {
-      throw transportError(prepared ? "transport" : "request", request, failure, url);
+      throw new AdapterFailure(prepared ? "transport" : "request", url, failure);
     }
   };
 }

@@ -1,4 +1,4 @@
-import { transportError } from "./core/errors.js";
+import { AdapterFailure, FailureWithCleanupError } from "./core/errors.js";
 import type {
   MultipartResponse,
   MultipartResponseValue,
@@ -78,9 +78,12 @@ class FetchResponseHandle implements TransportResponse<FetchResponseKinds, Fetch
   readonly transport: FetchMetadata;
   private state: "unread" | "read" | "stream" = "unread";
 
-  constructor(private readonly native: Response) {
+  constructor(
+    private readonly native: Response,
+    requestUrl: string,
+  ) {
     this.status = native.status;
-    this.url = native.url;
+    this.url = native.url || requestUrl;
     this.transport = { redirected: native.redirected, type: native.type };
 
     // Fetch joins repeated values, except Set-Cookie.
@@ -90,6 +93,25 @@ class FetchResponseHandle implements TransportResponse<FetchResponseKinds, Fetch
     }
 
     this.headers = headers;
+  }
+
+  private async releaseUnreadBody() {
+    const stream = this.native.body;
+    if (stream === null) return;
+
+    if (/^text\/event-stream\s*(?:;|$)/i.test(this.headers["content-type"] ?? "")) {
+      await stream.cancel();
+      return;
+    }
+
+    const reader = stream.getReader();
+    try {
+      while (!(await reader.read()).done) {
+        // Drain each chunk so the connection can be reused.
+      }
+    } finally {
+      reader.releaseLock();
+    }
   }
 
   async read<Kind extends keyof FetchResponseKinds>(
@@ -103,18 +125,7 @@ class FetchResponseHandle implements TransportResponse<FetchResponseKinds, Fetch
     const response = this.native;
 
     if (kind === "none") {
-      const stream = response.body;
-      if (stream !== null) {
-        const reader = stream.getReader();
-        try {
-          while (!(await reader.read()).done) {
-            // Drain without buffering so the connection can be reused.
-          }
-        } finally {
-          reader.releaseLock();
-        }
-      }
-
+      await this.releaseUnreadBody();
       return undefined as never;
     }
 
@@ -135,6 +146,17 @@ class FetchResponseHandle implements TransportResponse<FetchResponseKinds, Fetch
     }
 
     if (kind === "multipart") {
+      // Native formData() also accepts URL-encoded bodies.
+      if (!/^multipart\/form-data\s*(?:;|$)/i.test(this.headers["content-type"] ?? "")) {
+        const error = new TypeError("Multipart response is not multipart/form-data");
+        try {
+          await this.releaseUnreadBody();
+        } catch (cleanupError) {
+          throw new FailureWithCleanupError(error, cleanupError);
+        }
+        throw error;
+      }
+
       return (await decodeFormData(await response.formData())) as never;
     }
 
@@ -298,9 +320,9 @@ export function fetchTransport(
       }
 
       prepared = true;
-      return new FetchResponseHandle(await fetch(url, options));
+      return new FetchResponseHandle(await fetch(url, options), url);
     } catch (failure) {
-      throw transportError(prepared ? "transport" : "request", request, failure, url);
+      throw new AdapterFailure(prepared ? "transport" : "request", url, failure);
     }
   };
 }

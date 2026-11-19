@@ -1,4 +1,4 @@
-import type { StandardIssue } from "./types.js";
+import type { ResponseHeaders, StandardIssue } from "./types.js";
 
 type Meta = Readonly<Record<string, unknown>>;
 
@@ -11,12 +11,14 @@ type SchemaPart = "path" | "query" | "headers" | "body";
  * - `request`: Nothing was sent because the call input, URL, preparation,
  *   or a schema failed.
  * - `transport`: The transport failed to deliver or release a response.
+ * - `timeout`: The transport failed with an error named `TimeoutError`.
  * - `status`: The status falls outside the accepted set.
  * - `response`: The body cannot be decoded, or a response schema rejects
  *   the response.
  *
  * `schema` names the schema that failed. It reported `issues` or threw
- * `cause`.
+ * `cause`. `status` and `response` errors keep the raw response `headers`
+ * and the `body` that the client read.
  *
  * @example
  * ```ts
@@ -48,6 +50,8 @@ export type ClientError = Error & {
         readonly status: undefined;
         readonly schema: SchemaPart | undefined;
         readonly issues: readonly StandardIssue[] | undefined;
+        readonly headers: undefined;
+        readonly body: undefined;
       }
     | {
         /** The transport failed to deliver or release a response. */
@@ -57,6 +61,17 @@ export type ClientError = Error & {
         readonly status: number | undefined;
         readonly schema: undefined;
         readonly issues: undefined;
+        readonly headers: undefined;
+        readonly body: undefined;
+      }
+    | {
+        /** The transport failed with an error named `TimeoutError`. */
+        readonly code: "timeout";
+        readonly status: number | undefined;
+        readonly schema: undefined;
+        readonly issues: undefined;
+        readonly headers: undefined;
+        readonly body: undefined;
       }
     | {
         /** The status falls outside the accepted set. */
@@ -64,6 +79,13 @@ export type ClientError = Error & {
         readonly status: number;
         readonly schema: undefined;
         readonly issues: undefined;
+        readonly headers: ResponseHeaders;
+
+        /**
+         * The body as text if the `Content-Type` is textual or absent.
+         * `undefined` for other types or if the body cannot be read.
+         */
+        readonly body: string | undefined;
       }
     | {
         /**
@@ -76,6 +98,13 @@ export type ClientError = Error & {
         /** `undefined` when the body could not be decoded. */
         readonly schema: "headers" | "body" | undefined;
         readonly issues: readonly StandardIssue[] | undefined;
+        readonly headers: ResponseHeaders;
+
+        /**
+         * The decoded value that the body schema rejected. `undefined` if
+         * the body could not be decoded or the headers schema failed.
+         */
+        readonly body: unknown;
       }
   );
 
@@ -143,15 +172,28 @@ function causeText(cause: unknown) {
   return inner === "" ? `: ${outer}` : `: ${outer} (${inner})`;
 }
 
+/** The most characters of a response body that a message shows. */
+const bodyLimit = 1000;
+
+function bodyText(text: string | undefined) {
+  if (text === undefined || text === "") {
+    return "";
+  }
+
+  return "\n" + (text.length > bodyLimit ? text.slice(0, bodyLimit) + "…" : text);
+}
+
 function describe(
   summary: string,
   method: string,
   url: string | undefined,
   issues: readonly StandardIssue[] | undefined,
   cause: unknown,
+  text: string | undefined,
 ) {
   const detail =
-    issues !== undefined && issues.length > 0 ? issuesText(issues) : causeText(cause);
+    (issues !== undefined && issues.length > 0 ? issuesText(issues) : causeText(cause)) +
+    bodyText(text);
 
   if (!url) {
     return summary + detail;
@@ -168,10 +210,13 @@ export interface ClientErrorFields {
   readonly summary: string;
   readonly method: string;
   readonly url?: string | undefined;
+  readonly template?: string | undefined;
   readonly meta: Meta;
   readonly status?: number | undefined;
   readonly schema?: SchemaPart | undefined;
   readonly issues?: readonly StandardIssue[] | undefined;
+  readonly headers?: ResponseHeaders | undefined;
+  readonly body?: unknown;
   readonly cause?: unknown;
 }
 
@@ -183,10 +228,22 @@ class ClientErrorInstance extends Error {
   declare readonly status: number | undefined;
   declare readonly schema: string | undefined;
   declare readonly issues: readonly StandardIssue[] | undefined;
+  declare readonly headers: ResponseHeaders | undefined;
+  declare readonly body: unknown;
   declare cleanupError?: unknown;
 
   constructor(fields: ClientErrorFields) {
-    super(describe(fields.summary, fields.method, fields.url, fields.issues, fields.cause));
+    super(
+      describe(
+        fields.summary,
+        fields.method,
+        fields.url ?? fields.template,
+        fields.issues,
+        fields.cause,
+        // Only a status error shows its body: a schema error lists issues.
+        fields.code === "status" ? (fields.body as string | undefined) : undefined,
+      ),
+    );
     this.code = fields.code;
     this.method = fields.method;
     this.url = fields.url;
@@ -194,6 +251,8 @@ class ClientErrorInstance extends Error {
     this.status = fields.status;
     this.schema = fields.schema;
     this.issues = fields.issues;
+    this.headers = fields.headers;
+    this.body = fields.body;
     this.cause = fields.cause;
   }
 }
@@ -240,26 +299,48 @@ export function failureCause(failure: unknown): unknown {
   return failure instanceof FailureWithCleanupError ? failure.cause : failure;
 }
 
+export function isTimeoutError(cause: unknown): boolean {
+  return (cause as { name?: unknown } | null)?.name === "TimeoutError";
+}
+
+// Only the adapter knows the resolved URL and whether sending had begun.
+export class AdapterFailure extends Error {
+  constructor(
+    readonly stage: "request" | "transport",
+    readonly url: string,
+    cause: unknown,
+  ) {
+    super(stage === "request" ? "Cannot prepare request" : "Cannot get response", { cause });
+  }
+}
+
 export function transportError(
-  code: "request" | "transport",
   request: {
     readonly method: string;
     readonly url: string;
     readonly endpoint: { readonly meta: Meta };
   },
   failure: unknown,
-  url: string = request.url,
 ): ClientError {
+  const adapter = failure instanceof AdapterFailure ? failure : undefined;
+  const original = adapter ? adapter.cause : failure;
+  const cause = failureCause(original);
+  let code: ClientError["code"] = adapter?.stage ?? "transport";
+  let summary = adapter?.message ?? "Cannot get response";
+  if (code === "transport" && isTimeoutError(cause)) {
+    code = "timeout";
+    summary = "Timed out waiting for response";
+  }
   return preserveCleanupError(
     new ClientError({
       code,
-      summary: code === "transport" ? "Cannot get response" : "Cannot prepare request",
+      summary,
       method: request.method,
-      url,
+      url: adapter?.url ?? request.url,
       meta: request.endpoint.meta,
-      cause: failureCause(failure),
+      cause,
     }),
-    failure,
+    original,
   );
 }
 
@@ -267,11 +348,14 @@ export function transportError(
 export function schemaError(
   method: string,
   url: string | undefined,
+  template: string,
   meta: Meta,
   status: number | undefined,
   schema: SchemaPart,
   issues: readonly StandardIssue[] | undefined,
   cause: unknown,
+  headers?: ResponseHeaders,
+  body?: unknown,
 ): ClientError {
   const outcome =
     issues === undefined
@@ -286,10 +370,13 @@ export function schemaError(
         : `Response ${schema} schema ${outcome} (status ${status})`,
     method,
     url,
+    template,
     meta,
     status,
     schema,
     issues,
+    headers,
+    body,
     cause,
   });
 }

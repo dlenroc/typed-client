@@ -26,14 +26,15 @@ export function schema<Result>(validate: (value: unknown) => Result) {
 }
 
 type FixtureResponses = Pick<ResponseKindMap, "json" | "none">;
-type ReadFixture = (kind: keyof FixtureResponses) => ResponseKindMap["json"] | undefined;
+type FixtureReadKind = keyof FixtureResponses | "text";
+type ReadFixture = (kind: FixtureReadKind) => ResponseKindMap["json"] | undefined;
 
 export function mockTransport<Options extends object = object>({
   status = 200,
   headers = {},
-  read = (kind) => (kind === "none" ? undefined : { id: 7 }),
+  read = (kind) => (kind === "json" ? { id: 7 } : undefined),
 }: { status?: number; headers?: ResponseHeaders; read?: ReadFixture } = {}) {
-  const decode = vi.fn(async (kind: keyof FixtureResponses) => read(kind));
+  const decode = vi.fn(async (kind: FixtureReadKind) => read(kind));
   const response = {
     status,
     url: "https://api.test/users/7",
@@ -78,6 +79,7 @@ export const testWithServer = test.extend("baseUrl", async ({}, { onCleanup }) =
     } else if (path === "/v1/bytes") {
       response.end(Buffer.from([0xe0, 0xa0, 0xff]));
     } else if (path === "/v1/form") {
+      response.setHeader("content-type", "application/x-www-form-urlencoded");
       response.end("tag=one&tag=two&empty=&bad=%FF");
     } else if (path === "/v1/multipart-tokens") {
       response.setHeader("content-type", 'multipart/form-data; boundary="example"');

@@ -218,9 +218,9 @@ describe.each(overHttp)("$name over HTTP", ({ create }) => {
     },
   );
 
-  testHttp("reject a multipart response that is not form-data", async ({ transport }) => {
+  testHttp.for(["/multipart-mixed", "/form"])("reject %s as a multipart response", async (path, { transport }) => {
     const get = c.bind(
-      c.endpoint("/multipart-mixed", { responses: { 200: c.multipart() } }),
+      c.endpoint(path, { responses: { 200: c.multipart() } }),
       transport,
     );
 
@@ -233,7 +233,30 @@ describe.each(overHttp)("$name over HTTP", ({ create }) => {
 
   testHttp("preserve every response byte", async ({ transport }) => {
     const get = c.bind(c.endpoint("/bytes", { responses: { 200: c.binary() } }), transport);
-    expect([...(await get()).body]).toEqual([0xe0, 0xa0, 0xff]);
+    const { body } = await get();
+    expect([...body]).toEqual([0xe0, 0xa0, 0xff]);
+    expect(body.buffer).toBeInstanceOf(ArrayBuffer);
+  });
+
+  testHttp("report a timeout with the code timeout", async ({ transport }) => {
+    const get = c.bind(c.endpoint("/slow", { responses: { 200: c.json() } }), transport);
+
+    await expect(get({ timeout: 50 })).rejects.toMatchObject({
+      code: "timeout",
+      status: undefined,
+      cause: { name: "TimeoutError" },
+    });
+  });
+
+  testHttp("read the body of a status error as text", async ({ transport }) => {
+    const get = c.bind(c.endpoint("/bad", { responses: { 204: c.none() } }), transport);
+
+    await expect(get()).rejects.toMatchObject({
+      code: "status",
+      status: 200,
+      body: "{bad",
+      message: expect.stringMatching(/\n\{bad$/),
+    });
   });
 
   testHttp("discard malformed JSON without decoding it", async ({ transport }) => {
@@ -345,8 +368,9 @@ describe("Fetch", () => {
     );
 
     await expect(get({ timeout: 5 })).rejects.toMatchObject({
-      code: "transport",
+      code: "timeout",
       cause: { name: "TimeoutError" },
+      message: expect.stringMatching(/^Timed out waiting for response for GET /),
     });
 
     const reason = new Error("stop");
@@ -354,6 +378,67 @@ describe("Fetch", () => {
     const aborted = get({ timeout: 60_000, transport: { signal: controller.signal } });
     controller.abort(reason);
     await expect(aborted).rejects.toMatchObject({ code: "transport", cause: reason });
+
+    const plain = new AbortController();
+    const abortedPlainly = get({ timeout: 60_000, transport: { signal: plain.signal } });
+    plain.abort();
+    await expect(abortedPlainly).rejects.toMatchObject({
+      code: "transport",
+      cause: { name: "AbortError" },
+    });
+  });
+
+  test.each([200, 503])("drain a discarded Fetch body on status %i", async (status) => {
+    const cancel = vi.fn();
+    let chunks = 0;
+    const get = c.bind(c.endpoint("/users", { responses: { 200: c.json() } }), fetchTransport({
+      fetch: async () => new Response(new ReadableStream<Uint8Array>({
+        pull(controller) {
+          if (++chunks === 3) controller.close();
+          else controller.enqueue(Uint8Array.of(0xff));
+        },
+        cancel,
+      }), { status }),
+    }));
+
+    const result = get({ discard: true });
+    if (status === 200) await expect(result).resolves.toMatchObject({ status, body: undefined });
+    else await expect(result).rejects.toMatchObject({ code: "status", status, body: undefined });
+    expect(chunks).toBe(3);
+    expect(cancel).not.toHaveBeenCalled();
+  });
+
+  test("explicit discard cancels an open error stream and preserves the request URL", async () => {
+    const cancel = vi.fn();
+    const get = c.bind(c.endpoint("/users/{id}", { responses: { 200: c.json() } }), fetchTransport({
+      baseUrl: "https://api.test",
+      fetch: async () => new Response(new ReadableStream({ cancel }), {
+        status: 503,
+        headers: { "content-type": "text/event-stream" },
+      }),
+    }));
+
+    await expect(get({ path: { id: 42 }, discard: true })).rejects.toMatchObject({
+      code: "status", status: 503, url: "https://api.test/users/42", body: undefined,
+    });
+    expect(cancel).toHaveBeenCalledTimes(1);
+  });
+
+  test("retain the status when the deadline expires during a Fetch body read", async () => {
+    const get = c.bind(
+      c.endpoint("/users", { responses: { 200: c.json() } }),
+      fetchTransport({
+        fetch: async (_url, init) => new Response(new ReadableStream({
+          start(controller) {
+            const signal = init!.signal!;
+            signal.addEventListener("abort", () => controller.error(signal.reason), { once: true });
+          },
+        })),
+      }),
+    );
+    await expect(get({ timeout: 5 })).rejects.toMatchObject({
+      code: "timeout", status: 200, cause: { name: "TimeoutError" },
+    });
   });
 
   test("ignore request fields placed under transport", async () => {

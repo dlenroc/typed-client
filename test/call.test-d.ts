@@ -225,18 +225,29 @@ test("narrow ClientError diagnostics by code", (error?: unknown) => {
     expectTypeOf(error.status).toEqualTypeOf<number>();
     expectTypeOf(error.schema).toEqualTypeOf<undefined>();
     expectTypeOf(error.issues).toEqualTypeOf<undefined>();
+    expectTypeOf(error.headers).toEqualTypeOf<ResponseHeaders>();
+    expectTypeOf(error.body).toEqualTypeOf<string | undefined>();
   }
   if (error.code === "request") {
     expectTypeOf(error.status).toEqualTypeOf<undefined>();
+    expectTypeOf(error.headers).toEqualTypeOf<undefined>();
+    expectTypeOf(error.body).toEqualTypeOf<undefined>();
     expectTypeOf(error.schema).toEqualTypeOf<"path" | "query" | "headers" | "body" | undefined>();
     expectTypeOf(error.issues?.[0]?.message).toEqualTypeOf<string | undefined>();
   }
   if (error.code === "transport") {
     expectTypeOf(error.status).toEqualTypeOf<number | undefined>();
+    expectTypeOf(error.headers).toEqualTypeOf<undefined>();
+  }
+  if (error.code === "timeout") {
+    expectTypeOf(error.status).toEqualTypeOf<number | undefined>();
+    expectTypeOf(error.body).toEqualTypeOf<undefined>();
   }
   if (error.code === "response") {
     expectTypeOf(error.status).toEqualTypeOf<number>();
     expectTypeOf(error.schema).toEqualTypeOf<"headers" | "body" | undefined>();
+    expectTypeOf(error.headers).toEqualTypeOf<ResponseHeaders>();
+    expectTypeOf(error.body).toEqualTypeOf<unknown>();
   }
 });
 
