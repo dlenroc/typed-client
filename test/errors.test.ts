@@ -249,9 +249,9 @@ function clientError(
   summary: string,
   url: string | undefined,
   cause?: unknown,
-  issues?: ConstructorParameters<typeof ClientError>[7],
+  issues?: ConstructorParameters<typeof ClientError>[0]["issues"],
 ) {
-  return new ClientError("transport", summary, "GET", url, {}, undefined, undefined, issues, cause);
+  return new ClientError({ code: "transport", summary, method: "GET", url, meta: {}, issues, cause });
 }
 
 describe("error messages", () => {

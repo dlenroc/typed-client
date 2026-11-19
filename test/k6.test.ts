@@ -8,7 +8,7 @@ testWithServer("k6 sends and decodes requests over HTTP", { timeout: 30_000 }, a
   baseUrl,
   signal,
 }) => {
-  const script = fileURLToPath(new URL("./k6.ts", import.meta.url));
+  const script = fileURLToPath(new URL("./k6-script.ts", import.meta.url));
   const child = spawn(
     process.env.K6_BIN || "k6",
     ["run", "--quiet", "--no-usage-report", script],

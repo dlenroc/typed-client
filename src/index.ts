@@ -1,8 +1,8 @@
 import { endpoint, type } from "./core/endpoint.js";
-import { bind } from "./core/client.js";
+import { bind } from "./core/bind.js";
 
 export { ClientError } from "./core/errors.js";
-export type { InferInput, InferResponse } from "./core/contract-types.js";
+export type { InferInput, InferResponse } from "./core/bind-types.js";
 export type {
   CommonOptions,
   Transport,

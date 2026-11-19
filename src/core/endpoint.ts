@@ -8,7 +8,7 @@ import type {
   PreparedEndpoint,
   TypeHint,
   ValidateEndpoint,
-} from "./contract-types.js";
+} from "./endpoint-types.js";
 
 function compilePath(url: string): PathPlan {
   const suffixStart = url.search(/[?#]/);

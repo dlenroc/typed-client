@@ -1,11 +1,13 @@
-import { appendQuery } from "../shared/url.js";
-import type { BoundContract, Endpoint, EndpointTree, ValidateBinding } from "./contract-types.js";
+import { appendQuery } from "../http.js";
+import type { BoundContract, EndpointTree, ValidateBinding } from "./bind-types.js";
+import type { Endpoint } from "./endpoint-types.js";
 import { renderPath } from "./endpoint.js";
 import {
   ClientError,
-  FailureWithCleanupError,
-  ResponseCleanupError,
+  failureCause,
   preserveCleanupError,
+  ResponseCleanupError,
+  schemaError,
   transportError,
 } from "./errors.js";
 import type {
@@ -21,45 +23,43 @@ import type {
 
 const ONLY_NONE = ["none"] as const;
 
-type Meta = Endpoint["meta"];
+type SchemaCheck =
+  | { readonly ok: true; readonly value: unknown }
+  | {
+      readonly ok: false;
+      readonly issues: readonly StandardIssue[] | undefined;
+      readonly cause: unknown;
+    };
 
-function schemaError(
-  method: string,
-  url: string | undefined,
-  meta: Meta,
-  status: number | undefined,
-  schema: "path" | "query" | "headers" | "body",
-  issues: readonly StandardIssue[] | undefined,
-  cause: unknown,
-): ClientError {
-  const outcome =
-    issues === undefined
-      ? "threw"
-      : `reported ${issues.length} issue${issues.length === 1 ? "" : "s"}`;
+function outcome(result: {
+  readonly value?: unknown;
+  readonly issues?: readonly StandardIssue[] | undefined;
+}): SchemaCheck {
+  return result.issues
+    ? { ok: false, issues: result.issues, cause: undefined }
+    : { ok: true, value: result.value };
+}
 
-  return status === undefined
-    ? new ClientError(
-        "request",
-        `Request ${schema} schema ${outcome}`,
-        method,
-        url,
-        meta,
-        undefined,
-        schema,
-        issues,
-        cause,
-      )
-    : new ClientError(
-        "response",
-        `Response ${schema} schema ${outcome} (status ${status})`,
-        method,
-        url,
-        meta,
-        status,
-        schema,
-        issues,
-        cause,
-      );
+function thrown(cause: unknown): SchemaCheck {
+  return { ok: false, issues: undefined, cause };
+}
+
+/**
+ * Run a schema. The result has the output value, or the issues that the
+ * schema reported, or the error that it threw as `cause`. A schema that
+ * validates synchronously gives a synchronous result, so the call has no
+ * extra await.
+ */
+function check(schema: unknown, value: unknown): SchemaCheck | Promise<SchemaCheck> {
+  let result;
+
+  try {
+    result = (schema as StandardSchemaV1)["~standard"].validate(value);
+  } catch (cause) {
+    return thrown(cause);
+  }
+
+  return "then" in result ? result.then(outcome, thrown) : outcome(result);
 }
 
 function selectResponseKinds(
@@ -111,7 +111,11 @@ async function rejectResponse(
   throw primary;
 }
 
-async function invoke(
+/**
+ * Send one call: validate and prepare the request, call the transport,
+ * check the status, then decode and validate the response.
+ */
+async function call(
   endpoint: Endpoint,
   transport: Transport<any, any, any, any>,
   input?: Record<string, unknown>,
@@ -125,17 +129,13 @@ async function invoke(
   const meta = endpoint.meta;
 
   if (Array.isArray(expectedStatus) && expectedStatus.length === 0) {
-    throw new ClientError(
-      "request",
-      "Invalid call input",
+    throw new ClientError({
+      code: "request",
+      summary: "Invalid call input",
       method,
-      undefined,
       meta,
-      undefined,
-      undefined,
-      undefined,
-      new TypeError("status must not be empty"),
-    );
+      cause: new TypeError("status must not be empty"),
+    });
   }
 
   let path = input?.path;
@@ -145,72 +145,52 @@ async function invoke(
 
   if (!unchecked) {
     if (endpoint.pathSchema !== undefined) {
-      let result;
-      try {
-        result = (endpoint.pathSchema as StandardSchemaV1)["~standard"].validate(path);
-        if ("then" in result) {
-          result = await result;
-        }
-      } catch (cause) {
-        throw schemaError(method, undefined, meta, undefined, "path", undefined, cause);
+      let result = check(endpoint.pathSchema, path);
+      if ("then" in result) {
+        result = await result;
       }
 
-      if (result.issues) {
-        throw schemaError(method, undefined, meta, undefined, "path", result.issues, undefined);
+      if (!result.ok) {
+        throw schemaError(method, undefined, meta, undefined, "path", result.issues, result.cause);
       }
 
       path = result.value;
     }
 
     if (endpoint.querySchema !== undefined) {
-      let result;
-      try {
-        result = (endpoint.querySchema as StandardSchemaV1)["~standard"].validate(query);
-        if ("then" in result) {
-          result = await result;
-        }
-      } catch (cause) {
-        throw schemaError(method, undefined, meta, undefined, "query", undefined, cause);
+      let result = check(endpoint.querySchema, query);
+      if ("then" in result) {
+        result = await result;
       }
 
-      if (result.issues) {
-        throw schemaError(method, undefined, meta, undefined, "query", result.issues, undefined);
+      if (!result.ok) {
+        throw schemaError(method, undefined, meta, undefined, "query", result.issues, result.cause);
       }
 
       query = result.value;
     }
 
     if (endpoint.headersSchema !== undefined) {
-      let result;
-      try {
-        result = (endpoint.headersSchema as StandardSchemaV1)["~standard"].validate(headers);
-        if ("then" in result) {
-          result = await result;
-        }
-      } catch (cause) {
-        throw schemaError(method, undefined, meta, undefined, "headers", undefined, cause);
+      let result = check(endpoint.headersSchema, headers);
+      if ("then" in result) {
+        result = await result;
       }
 
-      if (result.issues) {
-        throw schemaError(method, undefined, meta, undefined, "headers", result.issues, undefined);
+      if (!result.ok) {
+        throw schemaError(method, undefined, meta, undefined, "headers", result.issues, result.cause);
       }
 
       headers = result.value;
     }
 
     if (endpoint.body.schema !== undefined) {
-      let result;
-      try {
-        result = (endpoint.body.schema as StandardSchemaV1)["~standard"].validate(body);
-        if ("then" in result) {
-          result = await result;
-        }
-      } catch (cause) {
-        throw schemaError(method, undefined, meta, undefined, "body", undefined, cause);
+      let result = check(endpoint.body.schema, body);
+      if ("then" in result) {
+        result = await result;
       }
 
-      if (result.issues) {
-        throw schemaError(method, undefined, meta, undefined, "body", result.issues, undefined);
+      if (!result.ok) {
+        throw schemaError(method, undefined, meta, undefined, "body", result.issues, result.cause);
       }
 
       body = result.value;
@@ -218,23 +198,20 @@ async function invoke(
   }
 
   let url: string;
+
   try {
     url = appendQuery(
       unchecked && typeof path === "string" ? path : renderPath(endpoint.path, path),
       query as QueryInput | undefined,
     );
   } catch (cause) {
-    throw new ClientError(
-      "request",
-      "Cannot build request URL",
+    throw new ClientError({
+      code: "request",
+      summary: "Cannot build request URL",
       method,
-      undefined,
       meta,
-      undefined,
-      undefined,
-      undefined,
       cause,
-    );
+    });
   }
 
   const bodyKind = unchecked ? (input?.bodyKind ?? endpoint.body.kind) : endpoint.body.kind;
@@ -251,6 +228,7 @@ async function invoke(
   };
 
   let handle: TransportResponse<any, any>;
+
   try {
     handle = await transport(transportRequest);
   } catch (failure) {
@@ -263,7 +241,6 @@ async function invoke(
   }
 
   const responseUrl = handle.url;
-
   const status = handle.status;
   const responseSpec = endpoint.responses[status];
   const accepted =
@@ -274,51 +251,35 @@ async function invoke(
         : expectedStatus.includes(status);
 
   if (!accepted) {
-    const expected =
-      expectedStatus === undefined
-        ? Object.keys(endpoint.responses).join(", ")
-        : typeof expectedStatus === "number"
-          ? expectedStatus
-          : expectedStatus.join(", ");
+    const expected = Array.isArray(expectedStatus)
+      ? expectedStatus.join(", ")
+      : (expectedStatus ?? Object.keys(endpoint.responses).join(", "));
 
     return rejectResponse(
       handle,
-      new ClientError(
-        "status",
-        `Unexpected status ${status} (expected ${expected})`,
+      new ClientError({
+        code: "status",
+        summary: `Unexpected status ${status} (expected ${expected})`,
         method,
-        responseUrl,
+        url: responseUrl,
         meta,
         status,
-        undefined,
-        undefined,
-        undefined,
-      ),
+      }),
     );
   }
 
   let responseHeaders: unknown = handle.headers;
 
   if (responseSpec?.headersSchema) {
-    let result;
-    try {
-      result = (responseSpec.headersSchema as StandardSchemaV1)["~standard"].validate(
-        responseHeaders,
-      );
-      if ("then" in result) {
-        result = await result;
-      }
-    } catch (cause) {
-      return rejectResponse(
-        handle,
-        schemaError(method, responseUrl, meta, status, "headers", undefined, cause),
-      );
+    let result = check(responseSpec.headersSchema, responseHeaders);
+    if ("then" in result) {
+      result = await result;
     }
 
-    if (result.issues) {
+    if (!result.ok) {
       return rejectResponse(
         handle,
-        schemaError(method, responseUrl, meta, status, "headers", result.issues, undefined),
+        schemaError(method, responseUrl, meta, status, "headers", result.issues, result.cause),
       );
     }
 
@@ -331,55 +292,35 @@ async function invoke(
   try {
     responseBody = await handle.read(kind);
   } catch (failure) {
-    const cause = failure instanceof FailureWithCleanupError ? failure.cause : failure;
+    const cause = failureCause(failure);
     const cleanupFailed = cause instanceof ResponseCleanupError;
-    const wrapped =
-      kind === "none" || cleanupFailed
-        ? new ClientError(
-            "transport",
-            `Cannot release response (status ${status})`,
-            method,
-            responseUrl,
-            meta,
-            status,
-            undefined,
-            undefined,
-            cleanupFailed ? cause.cause : cause,
-          )
-        : new ClientError(
-            "response",
-            `Cannot decode ${kind} response (status ${status})`,
-            method,
-            responseUrl,
-            meta,
-            status,
-            undefined,
-            undefined,
-            cause,
-          );
-
-    throw preserveCleanupError(wrapped, failure);
+    const released = kind === "none" || cleanupFailed;
+    throw preserveCleanupError(
+      new ClientError({
+        code: released ? "transport" : "response",
+        summary: released
+          ? `Cannot release response (status ${status})`
+          : `Cannot decode ${kind} response (status ${status})`,
+        method,
+        url: responseUrl,
+        meta,
+        status,
+        cause: cleanupFailed ? cause.cause : cause,
+      }),
+      failure,
+    );
   }
 
   if (!discard && responseSpec?.bodySchema !== undefined) {
-    let result;
-    try {
-      result = (responseSpec.bodySchema as StandardSchemaV1)["~standard"].validate(responseBody);
-      if ("then" in result) {
-        result = await result;
-      }
-    } catch (cause) {
-      return rejectResponse(
-        handle,
-        schemaError(method, responseUrl, meta, status, "body", undefined, cause),
-        true,
-      );
+    let result = check(responseSpec.bodySchema, responseBody);
+    if ("then" in result) {
+      result = await result;
     }
 
-    if (result.issues) {
+    if (!result.ok) {
       return rejectResponse(
         handle,
-        schemaError(method, responseUrl, meta, status, "body", result.issues, undefined),
+        schemaError(method, responseUrl, meta, status, "body", result.issues, result.cause),
         true,
       );
     }
@@ -400,22 +341,24 @@ async function invoke(
   };
 }
 
+/**
+ * Create one function for each endpoint of the tree. Groups keep their
+ * keys.
+ */
 export function bind<const Contract extends EndpointTree, Adapter extends AnyTransport>(
   contract: Contract & ValidateBinding<Contract, Adapter>,
   transport: Adapter,
 ): BoundContract<Contract, Adapter> {
-  const adapter = transport as Transport<any, any, any, any>;
-
   function visit(node: unknown): unknown {
     const endpoint = node as Endpoint;
     if (typeof endpoint?.method === "string") {
-      return (input?: Record<string, unknown>) => invoke(endpoint, adapter, input);
+      return (input?: Record<string, unknown>) =>
+        call(endpoint, transport as Transport<any, any, any, any>, input);
     }
 
-    const group: Record<string, unknown> = {};
     const entries = node as Record<string, unknown>;
-
     const keys = Object.keys(entries);
+    const group: Record<string, unknown> = {};
     for (let i = 0; i < keys.length; i++) {
       const key = keys[i]!;
       group[key] = visit(entries[key]);

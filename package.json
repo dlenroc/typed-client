@@ -34,7 +34,7 @@
     "access": "public"
   },
   "scripts": {
-    "build": "tsdown --no-config src/index.ts src/fetch.ts src/playwright.ts src/k6.ts --format esm --platform neutral --target es2022 --deps.never-bundle k6/http --deps.never-bundle node:buffer",
+    "build": "tsdown",
     "typecheck": "npm run build && tsc",
     "test": "npm run build && vitest run --typecheck",
     "prepack": "npm run build"

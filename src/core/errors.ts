@@ -86,6 +86,7 @@ function withoutCredentials(url: string) {
 
 function pathText(path: StandardIssue["path"] = []) {
   let text = "";
+
   for (let i = 0; i < path.length; i++) {
     const segment = path[i]!;
     const key = typeof segment === "object" ? segment.key : segment;
@@ -97,6 +98,7 @@ function pathText(path: StandardIssue["path"] = []) {
 
 function issueText(issue: StandardIssue) {
   const path = pathText(issue.path);
+
   // Some schemas, such as ArkType, start the message with the path.
   if (path === "" || issue.message.startsWith(`${path} `)) {
     return issue.message;
@@ -105,11 +107,10 @@ function issueText(issue: StandardIssue) {
   return issue.message === "" ? path : `${path}: ${issue.message}`;
 }
 
-const shownIssues = 10;
-
 function issuesText(issues: readonly StandardIssue[]) {
-  const shown = Math.min(issues.length, shownIssues);
+  const shown = Math.min(issues.length, 10);
   let text = "";
+
   for (let i = 0; i < shown; i++) {
     text += `\n  - ${issueText(issues[i]!)}`;
   }
@@ -123,8 +124,10 @@ function issuesText(issues: readonly StandardIssue[]) {
 
 // Only the first line: native messages can add call logs with headers.
 function firstLine(error: unknown) {
-  const text = typeof error === "string" ? error : error instanceof Error ? error.message : "";
+  const text =
+    typeof error === "string" ? error : error instanceof Error ? error.message : "";
   const line = text.split("\n", 1)[0]!;
+
   // Node gives a refused connection to `localhost` only as a code.
   const code = (error as { code?: unknown } | undefined)?.code;
   return line === "" && typeof code === "string" ? code : line;
@@ -149,13 +152,27 @@ function describe(
 ) {
   const detail =
     issues !== undefined && issues.length > 0 ? issuesText(issues) : causeText(cause);
+
   if (!url) {
     return summary + detail;
   }
 
-  const requestUrl = withoutCredentials(url);
   // The detail can repeat the request URL.
+  const requestUrl = withoutCredentials(url);
   return `${summary} for ${method} ${requestUrl}${detail.replaceAll(url, () => requestUrl)}`;
+}
+
+/** @internal */
+export interface ClientErrorFields {
+  readonly code: ClientError["code"];
+  readonly summary: string;
+  readonly method: string;
+  readonly url?: string | undefined;
+  readonly meta: Meta;
+  readonly status?: number | undefined;
+  readonly schema?: SchemaPart | undefined;
+  readonly issues?: readonly StandardIssue[] | undefined;
+  readonly cause?: unknown;
 }
 
 class ClientErrorInstance extends Error {
@@ -168,26 +185,16 @@ class ClientErrorInstance extends Error {
   declare readonly issues: readonly StandardIssue[] | undefined;
   declare cleanupError?: unknown;
 
-  constructor(
-    code: ClientError["code"],
-    summary: string,
-    method: string,
-    url: string | undefined,
-    meta: Meta,
-    status: number | undefined,
-    schema: SchemaPart | undefined,
-    issues: readonly StandardIssue[] | undefined,
-    cause: unknown,
-  ) {
-    super(describe(summary, method, url, issues, cause));
-    this.code = code;
-    this.method = method;
-    this.url = url;
-    this.meta = meta;
-    this.status = status;
-    this.schema = schema;
-    this.issues = issues;
-    this.cause = cause;
+  constructor(fields: ClientErrorFields) {
+    super(describe(fields.summary, fields.method, fields.url, fields.issues, fields.cause));
+    this.code = fields.code;
+    this.method = fields.method;
+    this.url = fields.url;
+    this.meta = fields.meta;
+    this.status = fields.status;
+    this.schema = fields.schema;
+    this.issues = fields.issues;
+    this.cause = fields.cause;
   }
 }
 
@@ -196,7 +203,7 @@ ClientErrorInstance.prototype.name = "ClientError";
 
 export const ClientError = ClientErrorInstance as unknown as {
   /** @internal */
-  new (...args: ConstructorParameters<typeof ClientErrorInstance>): ClientError;
+  new (fields: ClientErrorFields): ClientError;
 };
 
 export class ResponseCleanupError extends Error {
@@ -228,6 +235,11 @@ export function preserveCleanupError(error: ClientError, failure: unknown) {
   return error;
 }
 
+/** @internal The transport failure without the cleanup wrapper. */
+export function failureCause(failure: unknown): unknown {
+  return failure instanceof FailureWithCleanupError ? failure.cause : failure;
+}
+
 export function transportError(
   prepared: boolean,
   method: string,
@@ -236,17 +248,45 @@ export function transportError(
   failure: unknown,
 ): ClientError {
   return preserveCleanupError(
-    new ClientError(
-      prepared ? "transport" : "request",
-      prepared ? "Cannot get response" : "Cannot prepare request",
+    new ClientError({
+      code: prepared ? "transport" : "request",
+      summary: prepared ? "Cannot get response" : "Cannot prepare request",
       method,
       url,
       meta,
-      undefined,
-      undefined,
-      undefined,
-      failure instanceof FailureWithCleanupError ? failure.cause : failure,
-    ),
+      cause: failureCause(failure),
+    }),
     failure,
   );
+}
+
+/** A request or response schema reported issues or threw `cause`. */
+export function schemaError(
+  method: string,
+  url: string | undefined,
+  meta: Meta,
+  status: number | undefined,
+  schema: SchemaPart,
+  issues: readonly StandardIssue[] | undefined,
+  cause: unknown,
+): ClientError {
+  const outcome =
+    issues === undefined
+      ? "threw"
+      : `reported ${issues.length} issue${issues.length === 1 ? "" : "s"}`;
+
+  return new ClientError({
+    code: status === undefined ? "request" : "response",
+    summary:
+      status === undefined
+        ? `Request ${schema} schema ${outcome}`
+        : `Response ${schema} schema ${outcome} (status ${status})`,
+    method,
+    url,
+    meta,
+    status,
+    schema,
+    issues,
+    cause,
+  });
 }
