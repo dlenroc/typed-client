@@ -2,7 +2,6 @@ import { describe, expect, onTestFinished, test, vi } from "vitest";
 import { request, type APIRequestContext, type APIResponse } from "playwright-core";
 import {
   c,
-  type CommonOptions,
   type RequestKindMap,
   type ResponseKindMap,
   type Transport,
@@ -23,16 +22,16 @@ const overHttp = [
   },
 ];
 
-type HttpTransport = Transport<RequestKindMap, ResponseKindMap, CommonOptions, object>;
+type HttpTransport = Transport<RequestKindMap, ResponseKindMap, object, object>;
 
 const method = "POST";
-const responses = { 200: c.type<Echo>() };
+const responses = { 200: c.json<Echo>() };
 const echoEndpoints = {
-  json: c.endpoint("/echo", { method, responses }),
-  text: c.endpoint("/echo", { method, body: "text", responses }),
-  form: c.endpoint("/echo", { method, body: "urlencoded", responses }),
-  multipart: c.endpoint("/echo", { method, body: "multipart", responses }),
-  binary: c.endpoint("/echo", { method, body: "binary", responses }),
+  json: c.endpoint("/echo", { method, body: c.json(), responses }),
+  text: c.endpoint("/echo", { method, body: c.text(), responses }),
+  form: c.endpoint("/echo", { method, body: c.urlencoded(), responses }),
+  multipart: c.endpoint("/echo", { method, body: c.multipart(), responses }),
+  binary: c.endpoint("/echo", { method, body: c.binary(), responses }),
 };
 
 function bindEcho(transport: HttpTransport) {
@@ -56,7 +55,7 @@ describe.each(overHttp)("$name over HTTP", ({ create }) => {
 
   testHttp("return a redirect unless asked to follow it", async ({ transport }) => {
     const get = c.bind(
-      c.endpoint("/redirect", { responses: { 200: c.type<Echo>(), 302: "none" } }),
+      c.endpoint("/redirect", { responses: { 200: c.json<Echo>(), 302: c.none() } }),
       transport,
     );
 
@@ -185,7 +184,7 @@ describe.each(overHttp)("$name over HTTP", ({ create }) => {
     expect((await echoedForm(spelled.body)).get("tag")).toBe("one");
     expect(headers).toEqual({ "content-type": "multipart/form-data; boundary=caller" });
 
-    const malformed = await echo.multipart({ body, headers, unchecked: true });
+    const malformed = await echo.multipart({ body, headers: c.raw(headers) });
     expect(malformed.body.headers["content-type"]).toBe("multipart/form-data; boundary=caller");
   });
 
@@ -211,7 +210,7 @@ describe.each(overHttp)("$name over HTTP", ({ create }) => {
     "decode a $kind response",
     async ({ path, kind, status, expected }, { transport }) => {
       const get = c.bind(
-        c.endpoint(path, { responses: { [status]: kind } }),
+        c.endpoint(path, { responses: { [status]: c.kind(kind) } }),
         transport,
       );
 
@@ -221,7 +220,7 @@ describe.each(overHttp)("$name over HTTP", ({ create }) => {
 
   testHttp("reject a multipart response that is not form-data", async ({ transport }) => {
     const get = c.bind(
-      c.endpoint("/multipart-mixed", { responses: { 200: "multipart" } }),
+      c.endpoint("/multipart-mixed", { responses: { 200: c.multipart() } }),
       transport,
     );
 
@@ -233,12 +232,12 @@ describe.each(overHttp)("$name over HTTP", ({ create }) => {
   });
 
   testHttp("preserve every response byte", async ({ transport }) => {
-    const get = c.bind(c.endpoint("/bytes", { responses: { 200: "binary" } }), transport);
+    const get = c.bind(c.endpoint("/bytes", { responses: { 200: c.binary() } }), transport);
     expect([...(await get()).body]).toEqual([0xe0, 0xa0, 0xff]);
   });
 
   testHttp("discard malformed JSON without decoding it", async ({ transport }) => {
-    const get = c.bind(c.endpoint("/bad", { responses: { 200: "json" } }), transport);
+    const get = c.bind(c.endpoint("/bad", { responses: { 200: c.json() } }), transport);
 
     await expect(get()).rejects.toMatchObject({
       code: "response",
@@ -254,7 +253,7 @@ describe("Fetch", () => {
     baseUrl,
   }) => {
     const upload = c.bind(
-      c.endpoint("/echo", { method: "POST", body: "blob", responses: { 200: c.type<Echo>() } }),
+      c.endpoint("/echo", { method: "POST", body: c.kind("blob"), responses: { 200: c.json<Echo>() } }),
       fetchTransport({ baseUrl }),
     );
     const body = new Blob(["café"], { type: "text/x-note" });
@@ -273,7 +272,7 @@ describe("Fetch", () => {
     baseUrl,
   }) => {
     const upload = c.bind(
-      c.endpoint("/echo", { method: "POST", body: "stream", responses: { 200: c.type<Echo>() } }),
+      c.endpoint("/echo", { method: "POST", body: c.kind("stream"), responses: { 200: c.json<Echo>() } }),
       fetchTransport({ baseUrl }),
     );
     const encoder = new TextEncoder();
@@ -300,16 +299,16 @@ describe("Fetch", () => {
     const submit = c.bind(
       c.endpoint("/form", {
         method: "POST",
-        body: "urlencoded",
-        responses: { 204: "none" },
+        body: c.urlencoded(),
+        responses: { 204: c.none() },
       }),
       adapter,
     );
     const upload = c.bind(
       c.endpoint("/files", {
         method: "POST",
-        body: "multipart",
-        responses: { 204: "none" },
+        body: c.multipart(),
+        responses: { 204: c.none() },
       }),
       adapter,
     );
@@ -341,7 +340,7 @@ describe("Fetch", () => {
         }),
     );
     const get = c.bind(
-      c.endpoint("/users", { responses: { 200: "json" } }),
+      c.endpoint("/users", { responses: { 200: c.json() } }),
       fetchTransport({ baseUrl: "https://api.test", fetch: send }),
     );
 
@@ -362,7 +361,7 @@ describe("Fetch", () => {
       .fn<typeof fetch>()
       .mockImplementation(async () => new Response(null, { status: 204 }));
     const get = c.bind(
-      c.endpoint("/users", { responses: { 204: "none" } }),
+      c.endpoint("/users", { responses: { 204: c.none() } }),
       fetchTransport({ baseUrl: "https://api.test", fetch: send }),
     );
 
@@ -379,7 +378,7 @@ describe("Fetch", () => {
       .fn<typeof fetch>()
       .mockImplementation(async () => new Response(null, { status: 204 }));
     const get = c.bind(
-      c.endpoint("/users", { responses: { 204: "none" } }),
+      c.endpoint("/users", { responses: { 204: c.none() } }),
       fetchTransport({ baseUrl: "https://api.test", fetch: send }),
     );
 
@@ -411,7 +410,7 @@ describe("Fetch", () => {
       .fn<typeof fetch>()
       .mockImplementation(async () => new Response(null, { status: 204 }));
     const post = c.bind(
-      c.endpoint("/users", { method: "POST", body: "text", responses: { 204: "none" } }),
+      c.endpoint("/users", { method: "POST", body: c.text(), responses: { 204: c.none() } }),
       fetchTransport({ baseUrl: "https://api.test", fetch: send }),
     );
 
@@ -459,8 +458,8 @@ describe("Fetch", () => {
     const upload = c.bind(
       c.endpoint("/files", {
         method: "POST",
-        body: "multipart",
-        responses: { 204: "none" },
+        body: c.multipart(),
+        responses: { 204: c.none() },
       }),
       retry,
     );
@@ -481,7 +480,7 @@ describe("Fetch", () => {
   test("return a readable Blob", async () => {
     const get = c.bind(
       c.endpoint("https://api.test/download", {
-        responses: { 200: "blob" },
+        responses: { 200: c.kind("blob") },
       }),
       fetchTransport({ fetch: async () => new Response("café") }),
     );
@@ -496,7 +495,7 @@ describe("Fetch", () => {
     const native = new Response("café");
     const get = c.bind(
       c.endpoint("https://api.test/download", {
-        responses: { 200: "stream" },
+        responses: { 200: c.kind("stream") },
       }),
       fetchTransport({ fetch: async () => native }),
     );
@@ -519,7 +518,7 @@ describe("Fetch", () => {
     const native = new Response(new ReadableStream({ cancel }));
     const get = c.bind(
       c.endpoint("https://api.test/download", {
-        responses: { 200: { kind: "stream", schema: schema(() => ({ issues })) } },
+        responses: { 200: c.kind("stream", schema(() => ({ issues }))) },
       }),
       fetchTransport({ fetch: async () => native }),
     );
@@ -545,7 +544,7 @@ describe("Playwright", () => {
     const context = await request.newContext();
     onTestFinished(() => context.dispose());
     const get = c.bind(
-      c.endpoint("/empty", { responses: { 204: "none" } }),
+      c.endpoint("/empty", { responses: { 204: c.none() } }),
       playwrightTransport({ context, baseUrl }),
     );
 
@@ -567,15 +566,15 @@ describe("Playwright", () => {
     const baseURL: string | undefined = undefined;
     const api = c.bind(
       {
-        relative: c.endpoint("/echo?a=1", { responses: { 200: c.type<Echo>() } }),
-        absolute: c.endpoint(`${baseUrl}/echo`, { responses: { 200: c.type<Echo>() } }),
+        relative: c.endpoint("/echo?a=1", { responses: { 200: c.json<Echo>() } }),
+        absolute: c.endpoint(`${baseUrl}/echo`, { responses: { 200: c.json<Echo>() } }),
       },
       playwrightTransport({ context, baseUrl: baseURL }),
     );
 
     await expect(api.relative()).resolves.toMatchObject({ body: { url: "/v1/echo?a=1" } });
     await expect(api.absolute()).resolves.toMatchObject({ body: { url: "/v1/echo" } });
-    await expect(api.relative({ unchecked: true, path: "/v1/echo" })).resolves.toMatchObject({
+    await expect(api.relative({ path: c.raw("/v1/echo") })).resolves.toMatchObject({
       body: { url: "/v1/v1/echo" },
     });
   });
@@ -584,7 +583,7 @@ describe("Playwright", () => {
     const context = await request.newContext();
     onTestFinished(() => context.dispose());
     const get = c.bind(
-      c.endpoint("/multipart-tokens", { responses: { 200: "multipart" } }),
+      c.endpoint("/multipart-tokens", { responses: { 200: c.multipart() } }),
       playwrightTransport({ context, baseUrl }),
     );
 
@@ -608,8 +607,8 @@ describe("Playwright", () => {
     const get = c.bind(
       c.endpoint("/bytes", {
         method: "POST",
-        body: "binary",
-        responses: { 200: "binary" },
+        body: c.binary(),
+        responses: { 200: c.binary() },
       }),
       playwrightTransport({ context: { fetch: send } }),
     );
@@ -651,7 +650,7 @@ describe("Playwright", () => {
       },
     });
     const get = c.bind(
-      c.endpoint("/users", { responses: { 200: "json" } }),
+      c.endpoint("/users", { responses: { 200: c.json() } }),
       playwrightTransport({ context: { fetch: async () => response } }),
     );
 

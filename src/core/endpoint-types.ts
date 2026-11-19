@@ -4,6 +4,7 @@ import type {
   JsonValue,
   MultipartFile,
   MultipartInput,
+  NativeFormData,
   QueryInput,
   RequestKindMap,
   ResponseHeaders,
@@ -22,19 +23,33 @@ export type SchemaInput<Schema> =
   Schema extends TypeHint<infer Input>
     ? Input
     : Schema extends StandardSchemaV1<any, any>
-      ? NonNullable<Schema["~standard"]["types"]>["input"]
+      ? "types" extends keyof Schema["~standard"]
+        ? NonNullable<Schema["~standard"]["types"]>["input"]
+        : unknown
       : never;
 
 export type SchemaOutput<Schema> =
   Schema extends TypeHint<infer Output>
     ? Output
     : Schema extends StandardSchemaV1<any, any>
-      ? NonNullable<Schema["~standard"]["types"]>["output"]
+      ? "types" extends keyof Schema["~standard"]
+        ? NonNullable<Schema["~standard"]["types"]>["output"]
+        : Extract<Awaited<ReturnType<Schema["~standard"]["validate"]>>, { readonly value: unknown }>["value"]
       : never;
 
 export type PathScalar = string | number | boolean | bigint;
 
 export type Defined<Value> = Exclude<Value, undefined>;
+
+// Without `strictNullChecks`, `undefined` is assignable to every type.
+type NullChecks = undefined extends string ? false : true;
+
+/**
+ * True if a type accepts `undefined`. Without `strictNullChecks`, no type
+ * says so, and the result is false.
+ */
+export type AcceptsUndefined<Value> =
+  NullChecks extends true ? (undefined extends Value ? true : false) : false;
 export type IsAny<Value> = 0 extends 1 & Value ? true : false;
 
 type AllTrue<Results> = Exclude<Results, true> extends never ? true : false;
@@ -52,9 +67,7 @@ type IsFieldCollection<Value, Scalar> =
           {
             [Key in keyof Value]-?: IsAny<Value[Key]> extends true
               ? true
-              : Defined<Value[Key]> extends readonly (infer Item)[]
-                ? IsFieldValue<Item, Scalar>
-                : IsFieldValue<Defined<Value[Key]>, Scalar>;
+              : IsFieldValue<Defined<Value[Key]>, Scalar | readonly Scalar[]>;
           }[keyof Value]
         >
       : false;
@@ -95,7 +108,7 @@ type IsWireValue<Value, Wire> =
             : SameType<Wire, HeaderInput> extends true
               ? IsHeaderRecord<Defined<Value>>
               : SameType<Wire, MultipartInput> extends true
-                ? [Defined<Value>] extends [FormData]
+                ? [Defined<Value>] extends [NativeFormData]
                   ? true
                   : IsFieldCollection<Defined<Value>, FieldScalar | MultipartFile>
                 : [Defined<Value>] extends [Wire]
@@ -123,12 +136,19 @@ type KindOutput<Kind extends string> =
 export type IsRequestValue<Value, Wire> =
   [Defined<Value>] extends [never] ? true : IsWireValue<Value, Wire>;
 
-type RequestSchemaCheck<Schema, Wire> =
+// A check is `unknown` if it passes. Otherwise it is a message, which the
+// editor shows as the expected type.
+type RequestSchemaCheck<Schema, Wire, Message extends string> =
   Schema extends SchemaLike
     ? IsRequestValue<SchemaOutput<Schema>, Wire> extends true
       ? unknown
-      : never
+      : Message
     : never;
+
+// A failed check replaces the declared value with its message.
+type WithCheck<Value, Check> = Check extends string ? Check : Value & Check;
+
+type FirstFailure<First, Second> = unknown extends First ? Second : First;
 
 export type ResponseSchemaCheck<Schema, Wire> =
   SameType<Wire, JsonValue> extends true
@@ -136,7 +156,9 @@ export type ResponseSchemaCheck<Schema, Wire> =
     : Schema extends TypeHint<infer Value>
       ? IsWireValue<Value, Wire> extends true
         ? unknown
-        : never
+        : [Wire] extends [Value]
+          ? unknown
+          : never
       : Schema extends StandardSchemaV1<any, any>
         ? AcceptsDecodedValue<SchemaInput<Schema>, Wire> extends true
           ? unknown
@@ -154,47 +176,29 @@ export type HttpMethod =
   | "OPTIONS"
   | (string & {});
 
-type RequestKindName = keyof RequestKindMap | (string & {});
+declare const bodyMark: unique symbol;
 
-type ResponseKindName =
-  | keyof ResponseKindMap
-  | "blob"
-  | "stream"
-  | (string & {});
-
-interface BodyDescriptor<Kind extends string = string> {
-  readonly kind: Kind;
-
-  /**
-   * Request schemas produce the wire value. Response schemas receive
-   * the decoded body.
-   */
-  readonly schema?: SchemaLike;
-  readonly "~standard"?: never;
+/**
+ * A body declaration: a kind and an optional schema. Create it with
+ * `c.json()`, `c.text()`, `c.binary()`, `c.urlencoded()`, `c.multipart()`,
+ * `c.none()`, or `c.kind()`.
+ */
+export interface BodyDeclaration<
+  Kind extends string = string,
+  Schema extends SchemaLike | undefined = SchemaLike | undefined,
+> {
+  readonly [bodyMark]: { readonly kind: Kind; readonly schema: Schema };
 }
 
-type BodySpec<Kind extends string = string> =
-  | Kind
-  | SchemaLike
-  | BodyDescriptor<Kind>;
-
 interface ResponseDescriptor {
-  readonly body: BodySpec<ResponseKindName>;
+  /** @defaultValue `c.none()` */
+  readonly body?: BodyDeclaration;
 
   /** Receives raw, lowercase header names and can transform them. */
   readonly headers?: SchemaLike;
-  readonly "~standard"?: never;
-  readonly [hintType]?: never;
 }
 
-type ResponseDefinition =
-  | ResponseKindName
-  | SchemaLike
-  | (BodyDescriptor<ResponseKindName> & {
-      readonly body?: never;
-      readonly headers?: never;
-    })
-  | ResponseDescriptor;
+type ResponseDeclaration = BodyDeclaration | ResponseDescriptor;
 
 export interface EndpointDefinition {
   /** @defaultValue "GET" */
@@ -216,20 +220,18 @@ export interface EndpointDefinition {
   readonly headers?: SchemaLike;
 
   /**
-   * A direct type hint or schema selects JSON.
-   * Use `"none"` to forbid a body or `{ kind, schema }` to validate
-   * another body kind.
+   * The request body, for example `c.json<User>()`.
    *
-   * @defaultValue Optional JSON
+   * @defaultValue `c.none()`: the call sends no body
    */
-  readonly body?: BodySpec<RequestKindName>;
+  readonly body?: BodyDeclaration;
 
   /**
-   * Use `{ body, headers }` to validate headers alongside the body.
-   * Body schemas receive the decoded value. If there are no declared
+   * The responses by status, for example `{ 200: c.json<User>() }`. Use
+   * `{ body, headers }` to validate headers. If there are no declared
    * responses, pass `status` on each call.
    */
-  readonly responses?: Readonly<Record<number, ResponseDefinition>>;
+  readonly responses?: Readonly<Record<number, ResponseDeclaration>>;
 
   /** Passed by reference to the transport and included in `ClientError`. */
   readonly meta?: Readonly<Record<string, unknown>>;
@@ -240,135 +242,172 @@ export interface NormalizedBody {
   readonly schema: SchemaLike | undefined;
 }
 
+export interface NormalizedRequest {
+  readonly path: SchemaLike | undefined;
+  readonly query: SchemaLike | undefined;
+  readonly headers: SchemaLike | undefined;
+  readonly body: NormalizedBody;
+}
+
 export interface NormalizedResponse {
-  readonly kind: string;
-  readonly bodySchema: SchemaLike | undefined;
-  readonly headersSchema: SchemaLike | undefined;
-  readonly responseKinds: readonly string[];
+  readonly headers: SchemaLike | undefined;
+  readonly body: NormalizedBody;
 }
 
 type PreparedBodyKind<Kind extends string, Schema> =
   Kind extends unknown ? { readonly kind: Kind; readonly schema: Schema } : never;
 
-type PreparedBody<Body extends BodySpec> =
-  Body extends SchemaLike
-    ? { readonly kind: "json"; readonly schema: Body | undefined }
-    : Body extends string
-      ? { readonly kind: Body; readonly schema: undefined }
-      : Body extends BodyDescriptor
-        ? PreparedBodyKind<Body["kind"], PreparedSchema<Body, "schema">>
-        : never;
+// A `c.type` hint has no runtime schema, so a schema can be `undefined`.
+type PreparedBody<Body> =
+  Body extends BodyDeclaration<infer Kind, infer Schema>
+    ? PreparedBodyKind<Kind, Schema | undefined>
+    : never;
 
-type PreparedSchema<Declaration, Field extends string> =
+type NoBody = { readonly kind: "none"; readonly schema: undefined };
+
+export type PreparedSchema<Declaration, Field extends string> =
   Declaration extends { readonly [Key in Field]: infer Schema extends SchemaLike }
     ? Schema | undefined
     : undefined;
 
 type PreparedResponseBody<Body extends NormalizedBody, Headers = undefined> =
-  Body extends unknown
-    ? {
-        readonly kind: Body["kind"];
-        readonly bodySchema: Body["schema"];
-        readonly headersSchema: Headers;
-        readonly responseKinds: readonly string[];
-      }
-    : never;
+  Body extends unknown ? { readonly headers: Headers; readonly body: Body } : never;
 
-type PreparedResponse<Declaration> =
-  Declaration extends ResponseDescriptor
-    ? PreparedResponseBody<
-        PreparedBody<Declaration["body"]>,
+export type PreparedResponse<Declaration> =
+  Declaration extends BodyDeclaration
+    ? PreparedResponseBody<PreparedBody<Declaration>>
+    : PreparedResponseBody<
+        Declaration extends { readonly body: infer Body extends BodyDeclaration }
+          ? PreparedBody<Body>
+          : NoBody,
         PreparedSchema<Declaration, "headers">
-      >
-    : Declaration extends BodySpec
-      ? PreparedResponseBody<PreparedBody<Declaration>>
-      : never;
+      >;
 
-type PreparedResponses<Responses> = {
-  readonly [Status in keyof Responses]: PreparedResponse<Responses[Status]>;
-};
-
-export type PathPlan =
-  | string
-  | {
-      readonly parts: readonly string[];
-      readonly names: readonly string[];
-    };
-
-type PreparedPath<Url extends string> =
-  string extends Url
-    ? PathPlan
-    : [PathNames<Url>] extends [never]
-      ? Url
-      : {
-          readonly parts: readonly string[];
-          readonly names: readonly PathNames<Url>[];
-        };
-
+/**
+ * The normalized data of an endpoint. Each field is always present.
+ */
 export interface Endpoint<
-  Path extends PathPlan = PathPlan,
-  PathSchema extends SchemaLike | undefined = SchemaLike | undefined,
-  QuerySchema extends SchemaLike | undefined = SchemaLike | undefined,
-  HeadersSchema extends SchemaLike | undefined = SchemaLike | undefined,
-  Body extends NormalizedBody = NormalizedBody,
+  Template extends string = string,
+  Param extends string = string,
+  Request extends NormalizedRequest = NormalizedRequest,
   Responses extends Readonly<Record<number, NormalizedResponse>> = Readonly<
     Record<number, NormalizedResponse>
   >,
+  Meta extends Readonly<Record<string, unknown>> = Readonly<Record<string, unknown>>,
 > {
   readonly method: string;
-  readonly path: Path;
-  readonly pathSchema: PathSchema;
-  readonly querySchema: QuerySchema;
-  readonly headersSchema: HeadersSchema;
-  readonly body: Body;
+
+  /** The URL template as written, for example `/users/{id}`. */
+  readonly template: Template;
+
+  /** The names of the path parameters, in template order. */
+  readonly params: readonly Param[];
+
+  /** One schema for each call field, and the body kind. */
+  readonly request: Request;
+
+  /** The declared responses by status. */
   readonly responses: Responses;
-  readonly responseKinds: readonly string[];
-  readonly meta: Readonly<Record<string, unknown>>;
+
+  /** The `meta` value of the definition, by reference, or `{}`. */
+  readonly meta: Meta;
 }
 
-export type PreparedEndpoint<Url extends string, Declaration extends EndpointDefinition> =
-  Endpoint<
-    PreparedPath<Url>,
-    PreparedSchema<Declaration, "path">,
-    PreparedSchema<Declaration, "query">,
-    PreparedSchema<Declaration, "headers">,
-    Declaration extends { readonly body: infer Body extends BodySpec }
-      ? PreparedBody<Body>
-      : { readonly kind: "json"; readonly schema: undefined },
-    PreparedResponses<NonNullable<Declaration["responses"]>>
-  >;
+export type PreparedMeta<Declaration> =
+  Declaration extends { readonly meta: infer Meta extends Readonly<Record<string, unknown>> }
+    ? Meta
+    : {};
 
-type PathNames<Url extends string> =
+export type PreparedRequestBody<Declaration> =
+  Declaration extends { readonly body: infer Body extends BodyDeclaration }
+    ? PreparedBody<Body>
+    : NoBody;
+
+export type PathNames<Url extends string> =
   string extends Url ? string : TemplateNames<PathOnly<Url>>;
 
 type RequestBodyCheck<Body> =
-  Body extends string | SchemaLike
-    ? unknown
-    : Body extends BodyDescriptor
-      ? Body extends { readonly schema: infer Schema }
-        ? { readonly schema: RequestSchemaCheck<Schema, KindInput<Body["kind"]>> }
-        : unknown
-      : never;
+  Body extends BodyDeclaration<infer Kind, infer Schema>
+    ? [Schema] extends [undefined]
+      ? unknown
+      : RequestSchemaCheck<
+          Schema,
+          KindInput<Kind>,
+          `Body schema output does not match kind: ${Kind}`
+        >
+    : never;
+
+type ResponseSchemaMessage<Schema, Wire, Message extends string> =
+  [ResponseSchemaCheck<Schema, Wire>] extends [never] ? Message : unknown;
 
 type ResponseBodyCheck<Body> =
-  Body extends string | SchemaLike
-    ? unknown
-    : Body extends BodyDescriptor
-      ? Body extends { readonly schema: infer Schema }
-        ? { readonly schema: ResponseSchemaCheck<Schema, KindOutput<Body["kind"]>> }
-        : unknown
-      : never;
+  Body extends BodyDeclaration<infer Kind, infer Schema>
+    ? [Schema] extends [undefined]
+      ? unknown
+      : ResponseSchemaMessage<
+          Schema,
+          KindOutput<Kind>,
+          `Response schema input does not accept the decoded body of kind: ${Kind}`
+        >
+    : never;
 
-type ValidResponseDescriptor<Declaration extends ResponseDescriptor> = {
-  readonly body: Declaration["body"] & ResponseBodyCheck<Declaration["body"]>;
-} & (Declaration extends { readonly headers: infer Headers extends SchemaLike }
-  ? { readonly headers: Headers & ResponseSchemaCheck<Headers, ResponseHeaders> }
-  : unknown);
+type UppercaseKeys<Value> = {
+  [Key in keyof Value]-?: Key extends string
+    ? string extends Key
+      ? never
+      : Key extends Lowercase<Key>
+        ? never
+        : Key
+    : never;
+}[keyof Value];
+
+// Response header names are lowercase, so a key with uppercase never matches.
+type ResponseHeaderCheck<Headers> = FirstFailure<
+  ResponseSchemaMessage<
+    Headers,
+    ResponseHeaders,
+    "Response header schema input must accept string values"
+  >,
+  [UppercaseKeys<SchemaInput<Headers>>] extends [never]
+    ? unknown
+    : `Response header names are lowercase: ${UppercaseKeys<SchemaInput<Headers>> & string}`
+>;
+
+// An optional declaration changes the required call inputs or the decoded
+// response. Require it to be narrowed before constructing the endpoint.
+type OptionalKey<Declaration, Key extends keyof Declaration> =
+  Pick<Declaration, Key> extends Required<Pick<Declaration, Key>> ? never : Key;
+
+type KeysOfUnion<Value> = Value extends unknown ? keyof Value : never;
+
+// A union of independently declared objects can omit a key without
+// TypeScript marking it optional on either branch.
+type RequireSameKeys<Value> = [KeysOfUnion<Value>] extends [keyof Value] ? unknown : never;
+
+type RejectOptional<Declaration, Fields extends PropertyKey> = {
+  readonly [Key in keyof Declaration as Key extends Fields
+    ? OptionalKey<Declaration, Key>
+    : never]?: never;
+};
+
+type ValidResponseDescriptor<Declaration> = (Declaration extends {
+  readonly body: infer Body extends BodyDeclaration;
+}
+  ? { readonly body: WithCheck<Body, ResponseBodyCheck<Body>> }
+  : unknown) &
+  (Declaration extends { readonly headers: infer Headers extends SchemaLike }
+    ? { readonly headers: WithCheck<Headers, ResponseHeaderCheck<Headers>> }
+    : unknown);
 
 type ValidResponse<Declaration> =
-  Declaration extends ResponseDescriptor
-    ? ValidResponseDescriptor<Declaration>
-    : ResponseBodyCheck<Declaration>;
+  Declaration extends BodyDeclaration
+    ? WithCheck<Declaration, ResponseBodyCheck<Declaration>>
+    : ResponseDescriptor & ValidResponseDescriptor<Declaration> & RejectOptional<Declaration, "headers" | "body">;
+
+type MissingPathNames<Url extends string, Output> = Exclude<
+  PathNames<Url>,
+  { [Key in keyof Output]-?: Output[Key] extends PathScalar ? Key : never }[keyof Output]
+>;
 
 type RequiredPathOutput<Url extends string, Output> =
   string extends Url
@@ -377,42 +416,83 @@ type RequiredPathOutput<Url extends string, Output> =
       ? unknown
       : IsAny<Output> extends true
         ? unknown
-        : undefined extends Output
-          ? never
-          : [Output] extends [Readonly<Record<PathNames<Url>, PathScalar>>]
+        : AcceptsUndefined<Output> extends true
+          ? "Path schema output must not be undefined"
+          : [MissingPathNames<Url, Output>] extends [never]
             ? unknown
-            : never;
+            : `Path schema output needs parameter: ${MissingPathNames<Url, Output>}`;
 
 type ValidPathField<Url extends string, Declaration extends EndpointDefinition> =
   Declaration extends { readonly path: infer Schema extends SchemaLike }
     ? {
-        readonly path: Schema &
-          RequestSchemaCheck<Schema, Readonly<Record<string, PathScalar>>> &
-          RequiredPathOutput<Url, SchemaOutput<Schema>>;
+        readonly path: WithCheck<
+          Schema,
+          FirstFailure<
+            RequestSchemaCheck<
+              Schema,
+              Readonly<Record<string, PathScalar>>,
+              "Path schema output must have string, number, boolean, or bigint values"
+            >,
+            RequiredPathOutput<Url, SchemaOutput<Schema>>
+          >
+        >;
       }
     : unknown;
 
 type ValidQueryField<Declaration extends EndpointDefinition> =
   Declaration extends { readonly query: infer Schema extends SchemaLike }
-    ? { readonly query: Schema & RequestSchemaCheck<Schema, QueryInput> }
+    ? {
+        readonly query: WithCheck<
+          Schema,
+          RequestSchemaCheck<
+            Schema,
+            QueryInput,
+            "Query schema output must be a string or fields of scalar values"
+          >
+        >;
+      }
     : unknown;
 
 type ValidHeaderField<Declaration extends EndpointDefinition> =
   Declaration extends { readonly headers: infer Schema extends SchemaLike }
-    ? { readonly headers: Schema & RequestSchemaCheck<Schema, HeaderInput> }
+    ? {
+        readonly headers: WithCheck<
+          Schema,
+          RequestSchemaCheck<
+            Schema,
+            HeaderInput,
+            "Header schema output must be a record of scalar values"
+          >
+        >;
+      }
     : unknown;
 
 type ValidBodyField<Declaration extends EndpointDefinition> =
-  Declaration extends { readonly body: infer Body extends BodySpec }
-    ? { readonly body: Body & RequestBodyCheck<Body> }
+  Declaration extends { readonly body: infer Body extends BodyDeclaration }
+    ? { readonly body: WithCheck<Body, RequestBodyCheck<Body>> }
     : unknown;
 
-type ValidResponses<Responses> = {
-  readonly [Status in keyof Responses]: Responses[Status] &
-    ValidResponse<Responses[Status]>;
-};
+type StatusKeys = number | `${number}`;
 
-export type ValidateEndpoint<
+type ValidResponses<Responses> =
+  [Exclude<keyof Responses, StatusKeys>] extends [never]
+    ? {
+        readonly [Status in keyof Responses]: ValidResponse<Responses[Status]>;
+      } & RejectOptional<Responses, StatusKeys> & RequireSameKeys<Responses>
+    : `Response status must be a number: ${Exclude<keyof Responses, StatusKeys> & string}`;
+
+// `Declaration` is only an inference site, so TypeScript reports unknown keys.
+export type CheckedDefinition<
+  Url extends string,
+  Declaration extends EndpointDefinition,
+> = [Declaration] extends [never]
+  ? Declaration
+  : Omit<EndpointDefinition, Exclude<keyof Declaration, "method" | "meta"> | "responses"> &
+      ValidateEndpoint<Url, Declaration> &
+      RequireSameKeys<Declaration> &
+      RejectOptional<Declaration, "path" | "query" | "headers" | "body" | "responses">;
+
+type ValidateEndpoint<
   Url extends string,
   Declaration extends EndpointDefinition,
 > = ValidPathField<Url, Declaration> &

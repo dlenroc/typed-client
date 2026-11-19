@@ -1,6 +1,5 @@
 import { transportError } from "./core/errors.js";
 import type {
-  CommonOptions,
   MultipartResponse,
   MultipartResponseValue,
   RequestKindMap,
@@ -40,18 +39,16 @@ interface FetchResponseKinds extends ResponseKindMap {
   readonly stream: ReadableStream<Uint8Array>;
 }
 
-interface FetchMetadata {
+export interface FetchMetadata {
   readonly redirected: boolean;
   readonly type: ResponseType;
 }
 
-type FetchNativeOptions = CommonOptions & {
-  /**
-   * Passed to `fetch`. `redirect` here overrides `follow`. The client
-   * combines `signal` here with `timeout`.
-   */
-  readonly transport?: Omit<RequestInit, "method" | "headers" | "body">;
-};
+/**
+ * Passed to `fetch`. `redirect` here overrides `follow`. The client
+ * combines `signal` here with `timeout`.
+ */
+type FetchNativeOptions = Omit<RequestInit, "method" | "headers" | "body">;
 
 async function decodeFormData(form: FormData): Promise<MultipartResponse> {
   const target: Record<string, MultipartResponseValue | MultipartResponseValue[]> =
@@ -166,6 +163,14 @@ class FetchResponseHandle implements TransportResponse<FetchResponseKinds, Fetch
   }
 }
 
+/** The transport that {@link fetchTransport} returns. */
+export type FetchTransport = Transport<
+  FetchRequestKinds,
+  FetchResponseKinds,
+  FetchNativeOptions,
+  FetchMetadata
+>;
+
 /**
  * Send requests with the Fetch API of a browser or Node.js 24+.
  *
@@ -198,7 +203,7 @@ export function fetchTransport(
     /** @defaultValue globalThis.fetch */
     readonly fetch?: typeof globalThis.fetch;
   } = {},
-): Transport<FetchRequestKinds, FetchResponseKinds, FetchNativeOptions, FetchMetadata> {
+): FetchTransport {
   const fetch = config.fetch ?? globalThis.fetch;
   const resolveUrl = createUrlResolver(config.baseUrl);
 
@@ -211,8 +216,7 @@ export function fetchTransport(
     let prepared = false;
 
     try {
-      const input = request.input;
-      const native = input?.transport;
+      const native = request.options;
 
       // DOM `RequestInit` has no `duplex`, which a stream body needs.
       const options: RequestInit & { duplex?: "half" } = { ...native, method: request.method };
@@ -262,12 +266,7 @@ export function fetchTransport(
       }
 
       if (request.headers !== undefined || body !== undefined) {
-        const selected = prepareHeaders(
-          request.headers,
-          request.bodyKind,
-          body !== undefined,
-          input?.unchecked === true,
-        );
+        const selected = prepareHeaders(request.headers, request.bodyKind, body !== undefined);
 
         if (selected.contentTypeSuppressed) {
           // Fetch leaves Content-Type unset for byte bodies.
@@ -290,19 +289,18 @@ export function fetchTransport(
       }
 
       if (options.redirect === undefined) {
-        options.redirect = input?.follow === true ? "follow" : "manual";
+        options.redirect = request.follow ? "follow" : "manual";
       }
 
-      const timeout = input?.timeout;
-      if (timeout !== undefined) {
-        const limit = AbortSignal.timeout(timeout);
+      if (request.timeout !== undefined) {
+        const limit = AbortSignal.timeout(request.timeout);
         options.signal = options.signal ? AbortSignal.any([options.signal, limit]) : limit;
       }
 
       prepared = true;
       return new FetchResponseHandle(await fetch(url, options));
     } catch (failure) {
-      throw transportError(prepared, request.method, url, request.meta, failure);
+      throw transportError(prepared ? "transport" : "request", request, failure, url);
     }
   };
 }

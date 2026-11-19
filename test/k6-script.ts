@@ -21,7 +21,8 @@ async function jsonRequests() {
   const post = c.bind(
     c.endpoint("/echo", {
       method: "POST",
-      responses: { 200: c.type<Echo>(), 206: "binary" },
+      body: c.json(),
+      responses: { 200: c.json<Echo>(), 206: c.binary() },
     }),
     k6Transport({
       baseUrl: __ENV.BASE_URL!,
@@ -66,8 +67,8 @@ async function formRequests() {
   const form = c.bind(
     c.endpoint("/echo", {
       method: "POST",
-      body: "urlencoded",
-      responses: { 200: c.type<Echo>() },
+      body: c.urlencoded(),
+      responses: { 200: c.json<Echo>() },
     }),
     adapter,
   );
@@ -85,8 +86,8 @@ async function binaryRequests() {
   const binary = c.bind(
     c.endpoint("/echo", {
       method: "POST",
-      body: "binary",
-      responses: { 200: c.type<Echo>() },
+      body: c.binary(),
+      responses: { 200: c.json<Echo>() },
     }),
     adapter,
   );
@@ -110,8 +111,8 @@ async function multipartRequests() {
   const upload = c.bind(
     c.endpoint("/echo", {
       method: "POST",
-      body: "multipart",
-      responses: { 200: c.type<Echo>() },
+      body: c.multipart(),
+      responses: { 200: c.json<Echo>() },
     }),
     adapter,
   );
@@ -183,18 +184,17 @@ async function multipartRequests() {
 
   const malformed = await upload({
     body: pairs,
-    headers: { "content-type": "multipart/form-data; boundary=caller" },
-    unchecked: true,
+    headers: c.raw({ "content-type": "multipart/form-data; boundary=caller" }),
   });
   check(malformed.body.headers, {
-    "unchecked multipart preserves the supplied Content-Type": (headers) =>
+    "raw headers keep the supplied multipart Content-Type": (headers) =>
       headers["content-type"] === "multipart/form-data; boundary=caller",
   });
 }
 
 async function redirects() {
   const get = c.bind(
-    c.endpoint("/redirect", { responses: { 200: c.type<Echo>(), 302: "none" } }),
+    c.endpoint("/redirect", { responses: { 200: c.json<Echo>(), 302: c.none() } }),
     adapter,
   );
 
@@ -212,7 +212,7 @@ async function redirects() {
 
 async function responseDecoding() {
   const multipart = c.bind(
-    c.endpoint("/multipart-tokens", { responses: { 200: "multipart" } }),
+    c.endpoint("/multipart-tokens", { responses: { 200: c.multipart() } }),
     adapter,
   );
   check((await multipart()).body, {
@@ -232,7 +232,7 @@ async function responseDecoding() {
       Object.keys(value.transport.cookies).length === 0,
   });
 
-  const empty = c.bind(c.endpoint("/empty", { responses: { 204: "none" } }), adapter);
+  const empty = c.bind(c.endpoint("/empty", { responses: { 204: c.none() } }), adapter);
   check(await empty(), {
     "metadata has the remote port and empty TLS data over HTTP": (value) =>
       value.transport?.remote_port === Number(/:(\d+)/.exec(__ENV.BASE_URL!)?.[1]) &&
@@ -241,7 +241,7 @@ async function responseDecoding() {
   });
 
   const mixed = c.bind(
-    c.endpoint("/multipart-mixed", { responses: { 200: "multipart" } }),
+    c.endpoint("/multipart-mixed", { responses: { 200: c.multipart() } }),
     adapter,
   );
   let mixedError: unknown;
@@ -258,7 +258,7 @@ async function responseDecoding() {
   });
 
   const text = c.bind(
-    c.endpoint("/bytes", { responses: { 200: "text", 206: "binary" } }),
+    c.endpoint("/bytes", { responses: { 200: c.text(), 206: c.binary() } }),
     adapter,
   );
 
@@ -273,8 +273,8 @@ async function responseDecoding() {
     const get = c.bind(
       c.endpoint(path, {
         responses: {
-          [status]: "json",
-          206: "binary",
+          [status]: c.json(),
+          206: c.binary(),
         },
       }),
       adapter,

@@ -1,9 +1,9 @@
 import { describe, expect, test, vi } from "vitest";
-import { c } from "@dlenroc/typed-client";
+import { c, type RequestKindMap, type Transport } from "@dlenroc/typed-client";
 import { fetchTransport } from "@dlenroc/typed-client/fetch";
-import { mockTransport, recorder, schema, users } from "./fixtures.ts";
+import { mockTransport, recorder, schema, users, withToken, type JsonOrNone } from "./fixtures.ts";
 
-describe("endpoint calls", () => {
+describe("calls", () => {
   test.each(["sync", "async"] as const)(
     "apply %s schemas in request and response order",
     async (mode) => {
@@ -23,11 +23,11 @@ describe("endpoint calls", () => {
           path: transform("path", { id: "a/b" }),
           query: transform("query", { tag: ["one", "two"] }),
           headers: transform("headers", { "x-team": "identity" }),
-          body: transform("body", { name: "Ada" }),
+          body: c.json(transform("body", { name: "Ada" })),
           responses: {
             200: {
               headers: transform("response headers", { requestId: "r1" }),
-              body: transform("response body", { name: "Grace" }),
+              body: c.json(transform("response body", { name: "Grace" })),
             },
           },
         }),
@@ -60,6 +60,7 @@ describe("endpoint calls", () => {
         url: response.url,
         headers: { requestId: "r1" },
         body: { name: "Grace" },
+        transport: undefined,
       });
     },
   );
@@ -70,7 +71,7 @@ describe("endpoint calls", () => {
     const get = c.bind(
       c.endpoint("/index.php", {
         query: schema(validate),
-        responses: { 200: "json" },
+        responses: { 200: c.json() },
       }),
       adapter,
     );
@@ -86,7 +87,7 @@ describe("endpoint calls", () => {
     const { adapter } = mockTransport();
     const get = c.bind(
       c.endpoint("/users/:/{id}?fixed=1#end", {
-        responses: { 200: "json" },
+        responses: { 200: c.json() },
       }),
       adapter,
     );
@@ -112,7 +113,7 @@ describe("endpoint calls", () => {
     { template: "/a/{b?q={c}", path: {}, url: "/a/{b?q={c}" },
   ])("fill parameters in $template", async ({ template, path, url }) => {
     const { adapter } = mockTransport();
-    const get = c.bind(c.endpoint(template, { responses: { 200: "json" } }), adapter);
+    const get = c.bind(c.endpoint(template, { responses: { 200: c.json() } }), adapter);
 
     await get({ path } as never);
 
@@ -127,8 +128,9 @@ describe("endpoint calls", () => {
         users: {
           create: c.endpoint("/users", {
             method: "POST",
+            body: c.json(),
             meta,
-            responses: { 200: "json" },
+            responses: { 200: c.json() },
           }),
         },
       },
@@ -137,7 +139,7 @@ describe("endpoint calls", () => {
     const input = Object.freeze({
       body: { name: "Ada" },
       headers: { accept: "*/*" },
-      trace: "r1",
+      transport: { trace: "r1" },
     });
 
     await api.users.create(input);
@@ -146,58 +148,14 @@ describe("endpoint calls", () => {
     const [sent] = adapter.mock.calls[0]!;
     expect(sent.body).toBe(input.body);
     expect(sent.headers).toBe(input.headers);
-    expect(sent.input).toBe(input);
-    expect(sent.meta).toBe(meta);
+    expect(sent.options).toBe(input.transport);
+    expect(sent.endpoint.meta).toBe(meta);
   });
 
-  test("recognize schemas with their own body and kind fields", async () => {
-    const { adapter, response } = mockTransport();
-    const parse = { ...schema(() => ({ value: { name: "Ada" } })), kind: "text" as const };
-    const decode = { ...schema(() => ({ value: "Ada" })), body: "none" as const };
-    const call = c.bind(
-      c.endpoint("/users", {
-        method: "POST",
-        body: parse,
-        responses: { 200: decode },
-      }),
-      adapter,
-    );
-
-    await expect(call({ body: "Ada" })).resolves.toMatchObject({ body: "Ada" });
-
-    expect(adapter).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({ bodyKind: "json", body: { name: "Ada" } }),
-    );
-    expect(response.read).toHaveBeenCalledExactlyOnceWith("json");
-  });
-
-  test("recognize Standard Schemas that are functions", async () => {
-    const { adapter } = mockTransport();
-    const callable = <Output>(output: Output) =>
-      Object.assign(() => {}, schema(() => ({ value: output })), { kind: "intersection" });
-    const call = c.bind(
-      c.endpoint("/users/{id}", {
-        method: "POST",
-        path: callable({ id: "8" }),
-        query: callable({ q: "a" }),
-        body: callable({ name: "Ada" }),
-        responses: { 200: callable("Grace") },
-      }),
-      adapter,
-    );
-
-    await expect(call({ path: { id: "7" }, query: {}, body: {} })).resolves.toMatchObject({
-      body: "Grace",
-    });
-
-    expect(adapter).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({ url: "/users/8?q=a", bodyKind: "json", body: { name: "Ada" } }),
-    );
-  });
 });
 
-describe("call controls", () => {
-  test("unchecked overrides the request and still applies response schemas", async () => {
+describe("raw parts and call options", () => {
+  test("raw parts skip their request schemas and responses stay checked", async () => {
     const { adapter } = mockTransport();
     const validate = vi.fn(() => ({ value: { id: 7 } }));
     const requestSchema = schema(validate);
@@ -206,11 +164,11 @@ describe("call controls", () => {
         path: requestSchema,
         query: requestSchema,
         headers: requestSchema,
-        body: requestSchema,
+        body: c.json(requestSchema),
         responses: {
           200: {
             headers: schema(() => ({ value: "checked" })),
-            body: schema(() => ({ value: { checked: true } })),
+            body: c.json(schema(() => ({ value: { checked: true } }))),
           },
         },
       }),
@@ -218,11 +176,11 @@ describe("call controls", () => {
     );
 
     const result = await get({
-      unchecked: true,
-      method: "PATCH",
-      path: "https://other.test/broken",
-      bodyKind: "text",
-      body: "{bad",
+      method: c.raw("PATCH"),
+      path: c.raw("https://other.test/broken"),
+      query: c.raw(undefined),
+      headers: c.raw({}),
+      body: c.raw("{bad", "text"),
     });
 
     expect(validate).not.toHaveBeenCalled();
@@ -235,6 +193,49 @@ describe("call controls", () => {
       }),
     );
     expect(result).toMatchObject({ headers: "checked", body: { checked: true } });
+  });
+
+  test("a raw string for a JSON body is sent as the JSON text", async () => {
+    const { sent, transport } = recorder();
+    const post = c.bind(
+      c.endpoint("/users", { method: "POST", body: c.json(), responses: { 204: c.none() } }),
+      transport,
+    );
+    const headers = { accept: "application/json" };
+
+    await post({ body: c.raw("{broken") });
+    await post({ body: c.raw("{broken"), headers });
+    await post({ body: c.raw("{broken"), headers: { "Content-Type": "text/csv" } });
+    await post({ body: c.raw("{broken"), headers: { "content-type": null } });
+    await post({ body: c.raw({ name: "Ada" }) });
+
+    expect(sent.map((item) => [item.init.body, item.headers])).toEqual([
+      ["{broken", { "content-type": "application/json" }],
+      ["{broken", { accept: "application/json", "content-type": "application/json" }],
+      ["{broken", { "Content-Type": "text/csv" }],
+      // Fetch sends bytes to leave out its default Content-Type.
+      [new TextEncoder().encode("{broken"), {}],
+      ['{"name":"Ada"}', { "content-type": "application/json" }],
+    ]);
+    expect(headers).toEqual({ accept: "application/json" });
+  });
+
+  test("a raw JSON string reaches the transport as text", async () => {
+    const { adapter } = mockTransport();
+    const post = c.bind(
+      c.endpoint("/users", { method: "POST", body: c.json(), responses: { 200: c.json() } }),
+      adapter,
+    );
+
+    await post({ body: c.raw("[1]") });
+
+    expect(adapter).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        bodyKind: "text",
+        body: "[1]",
+        headers: { "content-type": "application/json" },
+      }),
+    );
   });
 
   test("an explicitly expected undeclared status returns raw headers", async () => {
@@ -257,7 +258,7 @@ describe("call controls", () => {
         responses: {
           200: {
             headers: schema(() => ({ value: { checked: true } })),
-            body: schema(validateBody),
+            body: c.json(schema(validateBody)),
           },
         },
       }),
@@ -274,23 +275,23 @@ describe("call controls", () => {
   });
 });
 
-describe("URLs", () => {
+describe("URLs, decorators, and the transport request", () => {
   test("the written text selects how the base URL applies", async () => {
     const { sent, transport } = recorder();
     const api = c.bind(
       {
-        tenant: c.endpoint("/{tenant}/users", { responses: { 204: "none" } }),
-        other: c.endpoint("https://other.test/users/{id}", { responses: { 204: "none" } }),
-        cdn: c.endpoint("//cdn.test/{file}", { responses: { 204: "none" } }),
+        tenant: c.endpoint("/{tenant}/users", { responses: { 204: c.none() } }),
+        other: c.endpoint("https://other.test/users/{id}", { responses: { 204: c.none() } }),
+        cdn: c.endpoint("//cdn.test/{file}", { responses: { 204: c.none() } }),
       },
       transport,
     );
     await api.tenant({ path: { tenant: "" } });
     await api.other({ path: { id: 1 } });
     await api.cdn({ path: { file: "a" } });
-    await api.tenant({ unchecked: true, path: "/raw" });
-    await api.tenant({ unchecked: true, path: "//host/x" });
-    await api.tenant({ unchecked: true, path: "http://other.test/x" });
+    await api.tenant({ path: c.raw("/raw") });
+    await api.tenant({ path: c.raw("//host/x") });
+    await api.tenant({ path: c.raw("http://other.test/x") });
     expect(sent.map((item) => item.url)).toEqual([
       "https://api.test/v1//users",
       "https://other.test/users/1",
@@ -302,7 +303,82 @@ describe("URLs", () => {
 
     const noBase: string[] = [];
     const bare = fetchTransport({ fetch: async (url) => (noBase.push(String(url)), new Response(null, { status: 204 })) });
-    await c.bind(users, bare).get({ unchecked: true, path: "//host/x" });
+    await c.bind(users, bare).get({ path: c.raw("//host/x") });
     expect(noBase).toEqual(["//host/x"]);
+  });
+
+  test("a decorator that spreads its headers first lets the caller win", async () => {
+    const { sent, transport } = recorder();
+    const ada = c.bind(users, withToken(transport, async () => "ada"));
+    const path = { id: 1 };
+    await ada.get({ path });
+    await ada.get({ path, headers: { authorization: "Bearer wrong" } });
+    await ada.get({ path, headers: { Authorization: "Bearer wrong" } });
+    await ada.get({ path, headers: { authorization: null } });
+    await ada.get({ path, headers: { Authorization: null } });
+    await ada.get({ path, headers: { authorization: undefined, "x-a": 1 } });
+    expect(sent.map((item) => item.headers)).toEqual([
+      { authorization: "Bearer ada" },
+      { authorization: "Bearer wrong" },
+      { Authorization: "Bearer wrong" },
+      {},
+      {},
+      { authorization: "Bearer ada", "x-a": "1" },
+    ]);
+  });
+
+  test("the transport gets prepared options and no call object", async () => {
+    const seen: unknown[] = [];
+    const mock: Transport<RequestKindMap, JsonOrNone, { trace?: string }> = async (request) => {
+      seen.push(request);
+      return { status: 204, url: request.url, headers: {}, read: async () => undefined as never };
+    };
+    const options = { trace: "t1" };
+    await c.bind(users, mock).get({ path: { id: 1 }, timeout: 50, follow: true, discard: true, transport: options });
+    expect(seen[0]).toEqual({
+      endpoint: users.get,
+      method: "GET",
+      url: "/users/1",
+      reference: "path",
+      headers: undefined,
+      bodyKind: "none",
+      body: undefined,
+      discard: true,
+      timeout: 50,
+      follow: true,
+      status: undefined,
+      options,
+    });
+    expect((seen[0] as { options: unknown }).options).toBe(options);
+  });
+
+  test("synchronous request schemas all run before the call yields", async () => {
+    const seen: string[] = [];
+    const pass = <Value>(part: string) =>
+      schema((value: unknown) => (seen.push(part), { value: value as Value }));
+    const endpoint = c.endpoint("/users/{id}", {
+      method: "POST",
+      path: pass<{ id: number }>("path"),
+      query: pass<Record<string, string>>("query"),
+      headers: pass<Record<string, string>>("headers"),
+      body: c.json(pass<{ name: string }>("body")),
+      responses: { 204: c.none() },
+    });
+    const { transport } = recorder();
+    const pending = c.bind(endpoint, transport)({
+      path: { id: 1 },
+      query: {},
+      headers: {},
+      body: { name: "Ada" },
+    });
+    expect(seen).toEqual(["path", "query", "headers", "body"]);
+    await pending;
+  });
+
+  test("a raw path parameter without a value is missing", async () => {
+    const { transport } = recorder();
+    await expect(c.bind(users, transport).get({ path: { id: c.raw(undefined as never) } })).rejects.toMatchObject({
+      code: "request",
+    });
   });
 });

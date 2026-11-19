@@ -1,7 +1,7 @@
 import { appendQuery } from "../http.js";
-import type { BoundContract, EndpointTree, ValidateBinding } from "./bind-types.js";
+import type { BoundContract, CheckBinding } from "./bind-types.js";
 import type { Endpoint } from "./endpoint-types.js";
-import { referenceOf, renderPath } from "./endpoint.js";
+import { compilePath, type PathPlan, referenceOf, renderPath } from "./endpoint.js";
 import {
   ClientError,
   failureCause,
@@ -10,6 +10,7 @@ import {
   schemaError,
   transportError,
 } from "./errors.js";
+import { isRaw, rawParts } from "./raw.js";
 import type {
   AnyTransport,
   HeaderInput,
@@ -21,8 +22,6 @@ import type {
   TransportRequest,
   TransportResponse,
 } from "./types.js";
-
-const ONLY_NONE = ["none"] as const;
 
 type SchemaCheck =
   | { readonly ok: true; readonly value: unknown }
@@ -63,35 +62,58 @@ function check(schema: unknown, value: unknown): SchemaCheck | Promise<SchemaChe
   return "then" in result ? result.then(outcome, thrown) : outcome(result);
 }
 
-function selectResponseKinds(
-  endpoint: Endpoint,
-  expectation: number | readonly number[] | undefined,
-  discard: boolean,
-): readonly string[] {
-  if (discard) {
-    return ONLY_NONE;
+const isContentType = (name: string) => name.toLowerCase() === "content-type";
+
+/**
+ * A transport and its decorators get only headers with a value or `null`.
+ * With `dropContentType`, a multipart call also loses its Content-Type, so
+ * the encoder's boundary is used, unless the last one given is `null`.
+ * With `jsonContentType`, a call without a Content-Type gets
+ * `application/json`. The headers are copied only when something changes.
+ */
+function cleanHeaders(
+  headers: HeaderInput | undefined,
+  dropContentType: boolean,
+  jsonContentType: boolean,
+): HeaderInput | undefined {
+  if (headers === undefined) {
+    return jsonContentType ? { "content-type": "application/json" } : undefined;
   }
 
-  if (expectation === undefined) {
-    return endpoint.responseKinds;
+  const checkContentType = dropContentType || jsonContentType;
+  let undefinedFound = false;
+  let dropping = false;
+  let contentTypeSet = false;
+
+  for (const name in headers) {
+    const value = headers[name];
+    if (value === undefined) {
+      undefinedFound = true;
+    } else if (checkContentType && isContentType(name)) {
+      contentTypeSet = true;
+      dropping = dropContentType && value !== null;
+    }
   }
 
-  if (typeof expectation === "number") {
-    return endpoint.responses[expectation]?.responseKinds ?? ONLY_NONE;
+  const addJson = jsonContentType && !contentTypeSet;
+  if (!undefinedFound && !dropping && !addJson) {
+    return headers;
   }
 
-  if (expectation.length === 1) {
-    return endpoint.responses[expectation[0]!]?.responseKinds ?? ONLY_NONE;
+  const kept: Record<string, HeaderInput[string]> = {};
+
+  for (const name in headers) {
+    const value = headers[name];
+    if (value !== undefined && !(dropping && isContentType(name))) {
+      kept[name] = value;
+    }
   }
 
-  const kinds = new Set<string>();
-
-  for (let i = 0; i < expectation.length; i++) {
-    const status = expectation[i]!;
-    kinds.add(endpoint.responses[status]?.kind ?? "none");
+  if (addJson) {
+    kept["content-type"] = "application/json";
   }
 
-  return [...kinds];
+  return kept;
 }
 
 async function rejectResponse(
@@ -118,16 +140,16 @@ async function rejectResponse(
  */
 async function call(
   endpoint: Endpoint,
+  plan: PathPlan,
   transport: Transport<any, any, any, any>,
   input?: Record<string, unknown>,
 ): Promise<unknown> {
-  const unchecked = input?.unchecked === true;
   const discard = input?.discard === true;
   const expectedStatus = input?.status as number | readonly number[] | undefined;
-  const method = unchecked
-    ? ((input?.method as string | undefined) ?? endpoint.method)
-    : endpoint.method;
+  const methodInput = input?.method;
+  const method = isRaw(methodInput) ? (rawParts(methodInput)[0] as string) : endpoint.method;
   const meta = endpoint.meta;
+  const request = endpoint.request;
 
   if (Array.isArray(expectedStatus) && expectedStatus.length === 0) {
     throw new ClientError({
@@ -143,72 +165,104 @@ async function call(
   let query = input?.query;
   let headers = input?.headers;
   let body = input?.body;
+  let bodyKind = request.body.kind;
 
-  if (!unchecked) {
-    if (endpoint.pathSchema !== undefined) {
-      let result = check(endpoint.pathSchema, path);
-      if ("then" in result) {
-        result = await result;
-      }
+  // A raw part skips its schema and its encoding.
+  const rawPath = isRaw(path);
+  if (rawPath) {
+    path = rawParts(path as never)[0];
+  }
 
-      if (!result.ok) {
-        throw schemaError(method, undefined, meta, undefined, "path", result.issues, result.cause);
-      }
+  const rawQuery = isRaw(query);
+  if (rawQuery) {
+    query = rawParts(query as never)[0];
+  }
 
-      path = result.value;
+  const rawHeaders = isRaw(headers);
+  if (rawHeaders) {
+    headers = rawParts(headers as never)[0];
+  }
+
+  const rawBody = isRaw(body);
+
+  // A raw string for a JSON body is the JSON text.
+  let rawJsonText = false;
+  if (rawBody) {
+    const [rawValue, rawKind] = rawParts(body as never);
+    body = rawValue;
+    rawJsonText = rawKind === undefined && bodyKind === "json" && typeof body === "string";
+    bodyKind = rawJsonText ? "text" : (rawKind ?? bodyKind);
+  }
+
+  if (request.path !== undefined && !rawPath) {
+    let result = check(request.path, path);
+    if ("then" in result) {
+      result = await result;
     }
 
-    if (endpoint.querySchema !== undefined) {
-      let result = check(endpoint.querySchema, query);
-      if ("then" in result) {
-        result = await result;
-      }
-
-      if (!result.ok) {
-        throw schemaError(method, undefined, meta, undefined, "query", result.issues, result.cause);
-      }
-
-      query = result.value;
+    if (!result.ok) {
+      throw schemaError(method, undefined, meta, undefined, "path", result.issues, result.cause);
     }
 
-    if (endpoint.headersSchema !== undefined) {
-      let result = check(endpoint.headersSchema, headers);
-      if ("then" in result) {
-        result = await result;
-      }
+    path = result.value;
+  }
 
-      if (!result.ok) {
-        throw schemaError(method, undefined, meta, undefined, "headers", result.issues, result.cause);
-      }
-
-      headers = result.value;
+  if (request.query !== undefined && !rawQuery) {
+    let result = check(request.query, query);
+    if ("then" in result) {
+      result = await result;
     }
 
-    if (endpoint.body.schema !== undefined) {
-      let result = check(endpoint.body.schema, body);
-      if ("then" in result) {
-        result = await result;
-      }
-
-      if (!result.ok) {
-        throw schemaError(method, undefined, meta, undefined, "body", result.issues, result.cause);
-      }
-
-      body = result.value;
+    if (!result.ok) {
+      throw schemaError(method, undefined, meta, undefined, "query", result.issues, result.cause);
     }
+
+    query = result.value;
+  }
+
+  if (request.headers !== undefined && !rawHeaders) {
+    let result = check(request.headers, headers);
+    if ("then" in result) {
+      result = await result;
+    }
+
+    if (!result.ok) {
+      throw schemaError(
+        method,
+        undefined,
+        meta,
+        undefined,
+        "headers",
+        result.issues,
+        result.cause,
+      );
+    }
+
+    headers = result.value;
+  }
+
+  if (request.body.schema !== undefined && !rawBody) {
+    let result = check(request.body.schema, body);
+    if ("then" in result) {
+      result = await result;
+    }
+
+    if (!result.ok) {
+      throw schemaError(method, undefined, meta, undefined, "body", result.issues, result.cause);
+    }
+
+    body = result.value;
   }
 
   let url: string;
   let reference: Reference;
 
   try {
-    if (unchecked && typeof path === "string") {
+    if (rawPath && typeof path === "string") {
       reference = referenceOf(path);
       url = appendQuery(path, query as QueryInput | undefined);
     } else {
-      // The first literal part is the start of the written template.
-      const plan = endpoint.path;
-      reference = referenceOf(typeof plan === "string" ? plan : plan.parts[0]!);
+      reference = plan.reference;
       url = appendQuery(renderPath(plan, path), query as QueryInput | undefined);
     }
   } catch (cause) {
@@ -221,18 +275,27 @@ async function call(
     });
   }
 
-  const bodyKind = unchecked ? (input?.bodyKind ?? endpoint.body.kind) : endpoint.body.kind;
-  const responseKinds = selectResponseKinds(endpoint, expectedStatus, discard);
+  if (headers !== undefined || rawJsonText) {
+    headers = cleanHeaders(
+      headers as HeaderInput | undefined,
+      !rawHeaders && bodyKind === "multipart" && body !== undefined,
+      rawJsonText,
+    );
+  }
+
   const transportRequest: TransportRequest = {
+    endpoint: endpoint as never,
     method,
     url,
     reference,
     headers: headers as HeaderInput | undefined,
     bodyKind: bodyKind as TransportRequest["bodyKind"],
     body: body as TransportRequest["body"],
-    responseKinds: responseKinds as TransportRequest["responseKinds"],
-    meta,
-    input,
+    discard,
+    timeout: input?.timeout as number | undefined,
+    follow: input?.follow === true,
+    status: expectedStatus,
+    options: input?.transport,
   };
 
   let handle: TransportResponse<any, any>;
@@ -245,7 +308,7 @@ async function call(
       throw failure;
     }
 
-    throw transportError(true, method, transportRequest.url, meta, failure);
+    throw transportError("transport", transportRequest, failure);
   }
 
   const responseUrl = handle.url;
@@ -278,8 +341,8 @@ async function call(
 
   let responseHeaders: unknown = handle.headers;
 
-  if (responseSpec?.headersSchema) {
-    let result = check(responseSpec.headersSchema, responseHeaders);
+  if (responseSpec?.headers) {
+    let result = check(responseSpec.headers, responseHeaders);
     if ("then" in result) {
       result = await result;
     }
@@ -294,7 +357,7 @@ async function call(
     responseHeaders = result.value;
   }
 
-  const kind = discard || responseSpec === undefined ? "none" : responseSpec.kind;
+  const kind = discard || responseSpec === undefined ? "none" : responseSpec.body.kind;
   let responseBody: unknown;
 
   try {
@@ -319,8 +382,8 @@ async function call(
     );
   }
 
-  if (!discard && responseSpec?.bodySchema !== undefined) {
-    let result = check(responseSpec.bodySchema, responseBody);
+  if (!discard && responseSpec?.body.schema !== undefined) {
+    let result = check(responseSpec.body.schema, responseBody);
     if ("then" in result) {
       result = await result;
     }
@@ -336,10 +399,6 @@ async function call(
     responseBody = result.value;
   }
 
-  if (handle.transport === undefined) {
-    return { status, url: responseUrl, headers: responseHeaders, body: responseBody };
-  }
-
   return {
     status,
     url: responseUrl,
@@ -353,15 +412,17 @@ async function call(
  * Create one function for each endpoint of the tree. Groups keep their
  * keys.
  */
-export function bind<const Contract extends EndpointTree, Adapter extends AnyTransport>(
-  contract: Contract & ValidateBinding<Contract, Adapter>,
-  transport: Adapter,
+export function bind<const Contract extends object, Adapter extends AnyTransport>(
+  contract: Contract,
+  transport: Adapter & CheckBinding<NoInfer<Contract>, NoInfer<Adapter>>,
 ): BoundContract<Contract, Adapter> {
   function visit(node: unknown): unknown {
     const endpoint = node as Endpoint;
     if (typeof endpoint?.method === "string") {
+      // Compiled once per binding, when `bind` runs.
+      const plan = compilePath(endpoint.template);
       return (input?: Record<string, unknown>) =>
-        call(endpoint, transport as Transport<any, any, any, any>, input);
+        call(endpoint, plan, transport as Transport<any, any, any, any>, input);
     }
 
     const entries = node as Record<string, unknown>;

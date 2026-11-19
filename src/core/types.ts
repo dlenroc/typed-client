@@ -1,3 +1,9 @@
+import type {
+  Endpoint,
+  NormalizedRequest,
+  NormalizedResponse,
+} from "./endpoint-types.js";
+
 type SchemaResult<Output> =
   | { readonly value: Output; readonly issues?: undefined }
   | { readonly issues: readonly StandardIssue[] };
@@ -12,21 +18,29 @@ export interface StandardSchemaV1<Input = unknown, Output = Input> {
   readonly "~standard": {
     readonly version: 1;
     readonly vendor: string;
-    readonly validate: (value: unknown) => SchemaResult<Output> | Promise<SchemaResult<Output>>;
-    readonly types?: { readonly input: Input; readonly output: Output } | undefined;
+    readonly validate: (
+      value: unknown,
+    ) => SchemaResult<Output> | Promise<SchemaResult<Output>>;
+    readonly types?:
+      | { readonly input: Input; readonly output: Output }
+      | undefined;
   };
 }
 
 export interface StandardIssue {
   readonly message: string;
-  readonly path?: readonly (PropertyKey | { readonly key: PropertyKey })[] | undefined;
+  readonly path?:
+    | readonly (PropertyKey | { readonly key: PropertyKey })[]
+    | undefined;
 }
 
 export type FieldScalar = string | number | boolean | bigint | null | undefined;
 
 type PairInput<Value> = readonly (readonly [string, Value])[];
 
-export type Fields<Value> = Readonly<Record<string, Value | readonly Value[]>> | PairInput<Value>;
+export type Fields<Value> =
+  | Readonly<Record<string, Value | readonly Value[]>>
+  | PairInput<Value>;
 
 /**
  * The client sends a string without encoding it. Repeat pairs or use
@@ -41,9 +55,9 @@ export type QueryInput = string | Fields<FieldScalar>;
  * @remarks
  * The client sends header names as given. Names that differ only in case
  * are one header, so the client sends the last spelling and the last
- * value. k6, Playwright, and HTTP/2 can change the case. `undefined`
- * allows a default value, `null` suppresses the header and its default,
- * and `""` sends an empty value.
+ * value. k6, Playwright, and HTTP/2 can change the case. `undefined` is
+ * the same as leaving the header out, `null` suppresses the header and
+ * its default, and `""` sends an empty value.
  */
 export type HeaderInput = Readonly<Record<string, FieldScalar>>;
 
@@ -60,11 +74,16 @@ export interface MultipartFile<Data = BinaryInput> {
   readonly mediaType?: string;
 }
 
+// k6 has no FormData global. Browser and Node consumers use their native type.
+export type NativeFormData = typeof globalThis extends {
+  FormData: { prototype: infer Form };
+} ? Form : never;
+
 /**
  * Repeat pairs or use arrays in records. Omit a field with `undefined` or
  * send an empty value with `null`.
  */
-export type MultipartInput = Fields<FieldScalar | MultipartFile> | FormData;
+export type MultipartInput = Fields<FieldScalar | MultipartFile> | NativeFormData;
 
 export type JsonValue =
   | null
@@ -74,12 +93,17 @@ export type JsonValue =
   | readonly JsonValue[]
   | { readonly [key: string]: JsonValue | undefined };
 
-export type UrlEncodedResponse = Readonly<Record<string, string | readonly string[] | undefined>>;
+export type UrlEncodedResponse = Readonly<
+  Record<string, string | readonly string[] | undefined>
+>;
 
-export type MultipartResponseValue = string | MultipartFile<Uint8Array>;
+export type MultipartResponseValue = string | MultipartFile<Uint8Array<ArrayBuffer>>;
 
 export type MultipartResponse = Readonly<
-  Record<string, MultipartResponseValue | readonly MultipartResponseValue[] | undefined>
+  Record<
+    string,
+    MultipartResponseValue | readonly MultipartResponseValue[] | undefined
+  >
 >;
 
 /**
@@ -104,8 +128,9 @@ export interface RequestKindMap {
   readonly urlencoded: QueryInput;
 
   /**
-   * Checked calls use the encoder's boundary. With `unchecked: true`, the
-   * client sends a supplied `Content-Type` unchanged.
+   * The encoder sets the boundary, so the client removes a `Content-Type`
+   * of the caller. With a raw headers value, the client sends a supplied
+   * `Content-Type` unchanged.
    */
   readonly multipart: MultipartInput;
 }
@@ -115,62 +140,13 @@ export interface ResponseKindMap {
   readonly none: undefined;
   readonly json: JsonValue;
   readonly text: string;
-  readonly binary: Uint8Array;
+  readonly binary: Uint8Array<ArrayBuffer>;
   readonly urlencoded: UrlEncodedResponse;
   readonly multipart: MultipartResponse;
 }
 
-export interface CoreOptions<Status extends number = number> {
-  /**
-   * A status array must be nonempty. Accepted undeclared statuses return
-   * raw headers and `body: undefined`.
-   *
-   * @defaultValue All declared response statuses
-   */
-  readonly status?: Status | readonly Status[];
-
-  /**
-   * Skip request schemas and allow `method`, `path`, and `bodyKind`
-   * overrides. Declared responses still use their schemas.
-   *
-   * @defaultValue false
-   */
-  readonly unchecked?: boolean;
-
-  /**
-   * Check status and headers, then discard the body before decoding.
-   *
-   * @defaultValue false
-   */
-  readonly discard?: boolean;
-}
-
-/** Options a transport supports by adding this type to its own. */
-export interface CommonOptions {
-  /**
-   * Milliseconds to wait for the response.
-   *
-   * @defaultValue k6: 60 s, Playwright: 30 s
-   */
-  readonly timeout?: number;
-
-  /**
-   * Follow redirects and return the final response.
-   *
-   * @defaultValue false
-   */
-  readonly follow?: boolean;
-}
-
-export interface RequestFields {
-  readonly path?: unknown;
-  readonly query?: unknown;
-  readonly headers?: unknown;
-  readonly body?: unknown;
-}
-
 /**
- * How a template or an unchecked path starts. `absolute`: with a scheme.
+ * How a template or a raw path starts. `absolute`: with a scheme.
  * `network`: with `//`. `path`: all others.
  */
 export type Reference = "absolute" | "network" | "path";
@@ -184,75 +160,93 @@ export interface TransportRequest<
   Responses extends object = ResponseKindMap,
   Options = unknown,
 > {
+  /** The endpoint of this call, by reference. */
+  readonly endpoint: Endpoint<
+    string,
+    string,
+    NormalizedRequest,
+    {
+      readonly [status: number]: NormalizedResponse & {
+        readonly body: { readonly kind: keyof Responses & string };
+      };
+    }
+  >;
+
   method: string;
 
-  /** The rendered template and query, or the unchecked `path` string. */
+  /** The rendered template and query, or the raw `path` string. */
   url: string;
 
   /**
-   * How the written template, or the unchecked `path` string, starts.
-   * Parameter values do not change it.
+   * How the written template, or the raw `path` string, starts. Parameter
+   * values do not change it.
    */
   reference: Reference;
 
-  /** See {@link HeaderInput} for `undefined` and `null` values. */
+  /** Values are a scalar or `null`. There are no `undefined` values. */
   headers?: HeaderInput | undefined;
 
   bodyKind: keyof Requests & string;
 
   /** `undefined` omits the body. Send JSON `null` as a value. */
-  body?: Requests[keyof Requests] | undefined;
+  body?: unknown;
 
-  /** Use these possible decoded kinds to choose the native capture mode. */
-  responseKinds: readonly (keyof Responses & string)[];
+  /** True if the client does not decode the body. */
+  discard: boolean;
 
-  /** The endpoint's metadata object, passed by reference. */
-  readonly meta: Readonly<Record<string, unknown>>;
+  /** Milliseconds to wait for the response, if the caller set a limit. */
+  timeout: number | undefined;
 
-  /**
-   * The original call object by reference. Includes raw request fields,
-   * call options, and native options.
-   */
-  readonly input?:
-    | (CoreOptions &
-        RequestFields &
-        Readonly<Options> & {
-          readonly method?: string;
-          readonly bodyKind?: keyof Requests & string;
-        })
-    | undefined;
+  /** True if the transport must follow redirects. */
+  follow: boolean;
+
+  /** The `status` value of the call, if the caller set it. */
+  status: number | readonly number[] | undefined;
+
+  /** The `transport` value of the call, by reference. */
+  readonly options: Options | undefined;
 }
 
 /**
  * The response that a transport returns. The client calls `read` at most
  * once. The caller owns live resources returned by a successful call.
  */
-export interface TransportResponse<
+export type TransportResponse<
   Responses extends object = ResponseKindMap,
   Metadata extends object = never,
-> {
+> = {
   readonly status: number;
   readonly url: string;
   readonly headers: ResponseHeaders;
 
-  /** Copy out metadata that would otherwise retain the native response. */
-  readonly transport?: Metadata | undefined;
-
   /**
    * Decode once and release resources that the result does not need.
-   * Use `none` to discard the body. Attach any secondary cleanup failure
-   * to a decoding error as `cleanupError`.
+   * Use `none` to discard the body. On an unexpected textual status the
+   * client requests `text` even if no endpoint declares that kind. Return
+   * `undefined` if the adapter has no diagnostic text to provide.
+   * Attach any secondary cleanup failure to a decoding error as `cleanupError`.
    */
-  read<Kind extends (keyof Responses & string) | "none">(
+  read<Kind extends (keyof Responses & string) | "none" | "text">(
     kind: Kind,
-  ): Promise<(Responses & { readonly none: undefined })[Kind]>;
+  ): Promise<(Responses & {
+    readonly none: undefined;
+    readonly text: "text" extends keyof Responses ? Responses["text"] : string | undefined;
+  })[Kind]>;
 
   /**
    * Release a live value that `read` returned, for example a stream. The
    * client calls it when a schema rejects that value.
    */
   discard?(): Promise<void>;
-}
+} & ([Metadata] extends [never]
+  ? { readonly transport?: undefined }
+  : {
+      /**
+       * Set on every response. Copy out metadata that would otherwise
+       * retain the native response.
+       */
+      readonly transport: Metadata;
+    });
 
 /**
  * A function that sends a prepared request and returns a
@@ -261,11 +255,11 @@ export interface TransportResponse<
  * @remarks
  * See {@link TransportRequest} for the prepared input and
  * {@link TransportResponse} for response ownership.
- * Read native options from `request.input` and expose metadata through
- * the response's `transport` field. To support `timeout` and `follow`, add
- * {@link CommonOptions} to the options. Before retrying a request,
- * release the previous response with `read("none")`. If
- * creating the `TransportResponse` fails, release the native response.
+ * Read the `transport` value of the call from `request.options` and expose
+ * metadata through the response's `transport` field. Apply
+ * `request.timeout` and `request.follow` if the transport can. Before
+ * retrying a request, release the previous response with `read("none")`.
+ * If creating the `TransportResponse` fails, release the native response.
  *
  * @example
  * ```ts
@@ -279,7 +273,7 @@ export interface TransportResponse<
  *     headers: {},
  *     read: async () => undefined,
  *   });
- * const endpoint = c.endpoint("/ping", { responses: { 204: "none" } });
+ * const endpoint = c.endpoint("/ping", { responses: { 204: c.none() } });
  * const ping = c.bind(endpoint, empty);
  * await ping();
  * ```
@@ -293,4 +287,6 @@ export type Transport<
   request: TransportRequest<Requests, Responses, Options>,
 ) => Promise<TransportResponse<Responses, Metadata>>;
 
-export type AnyTransport = Transport<any, {}, any, any>;
+export type AnyTransport = (
+  request: TransportRequest<any, {}, any>,
+) => Promise<TransportResponse<{}, never> | TransportResponse<{}, object>>;

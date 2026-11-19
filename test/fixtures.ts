@@ -6,6 +6,7 @@ import {
   type RequestKindMap,
   type ResponseHeaders,
   type ResponseKindMap,
+  type Transport,
   type TransportRequest,
   type TransportResponse,
 } from "@dlenroc/typed-client";
@@ -64,10 +65,14 @@ export const testWithServer = test.extend("baseUrl", async ({}, { onCleanup }) =
 
     const path = request.url?.split("?")[0];
 
-    if (path === "/v1/bad") {
+    if (path === "/v1/slow") {
+      setTimeout(() => response.end("{}"), 300);
+    } else if (path === "/v1/bad") {
       response.end("{bad");
     } else if (path === "/v1/redirect") {
       response.writeHead(302, { location: "/v1/echo" }).end();
+    } else if (path === "/v1/missing") {
+      response.writeHead(404).end();
     } else if (path === "/v1/empty") {
       response.writeHead(204).end();
     } else if (path === "/v1/bytes") {
@@ -130,6 +135,8 @@ export const testWithServer = test.extend("baseUrl", async ({}, { onCleanup }) =
   return `http://127.0.0.1:${address.port}/v1`;
 });
 
+export type JsonOrNone = Pick<ResponseKindMap, "json" | "none">;
+
 /** A Fetch transport with base URL `https://api.test/v1` that records each request. */
 export function recorder() {
   const sent: { url: string; headers: unknown; init: RequestInit }[] = [];
@@ -143,4 +150,13 @@ export function recorder() {
   return { sent, transport };
 }
 
-export const users = { get: c.endpoint("/users/{id}", { responses: { 204: "none" } }) };
+// No cast: the decorator names the four type parameters of the transport.
+export function withToken<Requests extends object, Responses extends object, Options, Metadata extends object>(
+  next: Transport<Requests, Responses, Options, Metadata>,
+  token: () => string | Promise<string>,
+): Transport<Requests, Responses, Options, Metadata> {
+  return async (request) =>
+    next({ ...request, headers: { authorization: `Bearer ${await token()}`, ...request.headers } });
+}
+
+export const users = { get: c.endpoint("/users/{id}", { responses: { 204: c.none() } }) };

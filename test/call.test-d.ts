@@ -4,31 +4,26 @@ import {
   ClientError,
   type InferInput,
   type InferResponse,
-  type RequestKindMap,
   type ResponseHeaders,
-  type ResponseKindMap,
-  type Transport,
 } from "@dlenroc/typed-client";
 import { fetchTransport } from "@dlenroc/typed-client/fetch";
-import { playwrightTransport } from "@dlenroc/typed-client/playwright";
-import type { APIRequestContext } from "playwright-core";
 
 declare const flag: boolean;
 declare const status: { status?: 418 };
 declare const discard: { discard?: boolean };
-declare const unchecked: { unchecked?: boolean };
+declare const maybeExpectation: { status: 418; discard: true } | undefined;
 
 describe("bound calls", () => {
   const api = c.bind(
     {
       getUser: c.endpoint("/users/{id}", {
         responses: {
-          200: { body: c.type<{ id: number }>(), headers: c.type<{ "x-team": string }>() },
-          404: "none",
+          200: { body: c.json<{ id: number }>(), headers: c.type<{ "x-team": string }>() },
+          404: c.none(),
         },
       }),
       health: c.endpoint("/health"),
-      post: c.endpoint("/users", { method: "POST", responses: { 201: "none" } }),
+      post: c.endpoint("/users", { method: "POST", body: c.json(), responses: { 201: c.none() } }),
     },
     fetchTransport(),
   );
@@ -40,20 +35,19 @@ describe("bound calls", () => {
 
     expectTypeOf(result).toEqualTypeOf<InferResponse<typeof api.getUser, 200>>();
     expectTypeOf(result.body).toEqualTypeOf<{ id: number }>();
-    expectTypeOf(result.headers).toEqualTypeOf<{ "x-team": string }>();
-    expectTypeOf(result.transport?.redirected).toEqualTypeOf<boolean | undefined>();
+    expectTypeOf(result.headers["x-team"]).toEqualTypeOf<string>();
+    expectTypeOf(result.headers["content-type"]).toEqualTypeOf<string | undefined>();
+    expectTypeOf(result.transport.redirected).toEqualTypeOf<boolean>();
 
-    // @ts-expect-error checked fixtures require the path parameter
+    // @ts-expect-error an inferred input requires the path parameter
     ({ status: 200 }) satisfies InferInput<typeof api.getUser>;
-    // @ts-expect-error unchecked calls have a different input shape
-    ({ path: { id: 7 }, unchecked: true }) satisfies InferInput<typeof api.getUser>;
     // @ts-expect-error Fetch cache options are checked
     await api.getUser({ path: { id: 7 }, transport: { cache: "bad" } });
   });
 
   test("infer path parameters inside segments", () => {
     const job = c.bind(
-      c.endpoint("/jobs/{id}:cancel/{file}.json?x={y}", { responses: { 204: "none" } }),
+      c.endpoint("/jobs/{id}:cancel/{file}.json?x={y}", { responses: { 204: c.none() } }),
       fetchTransport(),
     );
     ({ path: { id: 1, file: "a" } }) satisfies InferInput<typeof job>;
@@ -63,7 +57,7 @@ describe("bound calls", () => {
     ({ path: { id: 1, file: "a", y: 2 } }) satisfies InferInput<typeof job>;
 
     const literal = c.bind(
-      c.endpoint("/users/:id/{}", { responses: { 204: "none" } }),
+      c.endpoint("/users/:id/{}", { responses: { 204: c.none() } }),
       fetchTransport(),
     );
     void literal();
@@ -94,22 +88,20 @@ describe("bound calls", () => {
 
     // @ts-expect-error status-only calls require a status
     await api.health();
-    // @ts-expect-error unchecked mode still requires a status
-    await api.health({ unchecked: true });
+    // @ts-expect-error a raw part still requires a status
+    await api.health({ path: c.raw("/x") });
     // @ts-expect-error status-only input fixtures also require a status
     ({}) satisfies InferInput<typeof api.health>;
     // @ts-expect-error a literal empty list cannot accept any status
     await api.getUser({ path: { id: 7 }, status: [] });
+    // @ts-expect-error a status-only call rejects a literal empty list
+    await api.health({ status: [] });
   });
 
-  test("permit malformed requests only with explicit unchecked mode", async () => {
-    const optionalOverride: { unchecked?: true } = flag ? { unchecked: true } : {};
-
+  test("permit malformed parts only with a raw value", async () => {
     const malformed = await api.getUser({
-      unchecked: true,
-      path: "/broken",
-      bodyKind: "text",
-      body: "{bad",
+      path: c.raw("/broken"),
+      body: c.raw("{bad", "text"),
       status: [200, 422],
       discard: true,
       transport: { cache: "no-store" },
@@ -117,21 +109,71 @@ describe("bound calls", () => {
     expectTypeOf(malformed.status).toEqualTypeOf<200 | 422>();
     expectTypeOf(malformed.body).toEqualTypeOf<undefined>();
 
-    const valid = await api.getUser({ path: { id: 7 }, status: 200, ...unchecked });
-    expectTypeOf(valid.body).toEqualTypeOf<{ id: number }>();
+    // One raw parameter. The other fields stay checked.
+    const one = await api.getUser({ path: { id: c.raw("a/b") }, status: 200 });
+    expectTypeOf(one.body).toEqualTypeOf<{ id: number }>();
+    await api.getUser({ path: { id: 7 }, query: c.raw("a=%ZZ"), method: c.raw("PATCH") });
+    await api.getUser({ path: { id: 7 }, headers: c.raw({ "content-length": "9" }) });
 
-    // @ts-expect-error unchecked mode still requires a path
-    await api.getUser({ unchecked: true });
-    // @ts-expect-error checked calls need a scalar path parameter
+    // @ts-expect-error a raw part does not remove the required path
+    await api.getUser({ body: c.raw("{bad", "text") });
+    // @ts-expect-error a path parameter needs a scalar value
     await api.getUser({ path: { id: new Date() } });
-    // @ts-expect-error raw path is an unchecked override
-    await api.getUser({ path: "/broken", unchecked: flag });
-    // @ts-expect-error an optional true may leave request checks enabled
-    await api.getUser({ path: "/broken", ...optionalOverride });
-    // @ts-expect-error overriding the body kind requires unchecked mode
-    await api.getUser({ path: { id: 7 }, bodyKind: "text", body: "{bad" });
-    // @ts-expect-error unchecked text still requires a string
-    await api.getUser({ unchecked: true, path: "/broken", bodyKind: "text", body: 7 });
+    // @ts-expect-error a path string must be raw
+    await api.getUser({ path: "/broken" });
+    // @ts-expect-error a method must be raw
+    await api.getUser({ path: { id: 7 }, method: "PATCH" });
+    // @ts-expect-error a raw body with a kind must match the kind of the transport
+    await api.getUser({ path: { id: 7 }, body: c.raw(7, "text") });
+    // @ts-expect-error the transport has no such kind
+    await api.getUser({ path: { id: 7 }, body: c.raw("x", "xml") });
+    // @ts-expect-error a raw query is a string or a query record
+    await api.getUser({ path: { id: 7 }, query: c.raw(5) });
+    // @ts-expect-error a raw path parameter is a string
+    await api.getUser({ path: { id: c.raw(5) } });
+    const id = c.raw("a/b");
+    await api.getUser({ path: { id } });
+    await api.getUser({ path: id });
+    const stored = c.raw("{bad", "text");
+    await api.getUser({ path: { id: 7 }, body: stored });
+    // @ts-expect-error a raw path is a string
+    await api.getUser({ path: c.raw(7) });
+    // @ts-expect-error other fields stay checked next to a raw part
+    await api.getUser({ path: c.raw("/broken"), query: 7 });
+  });
+
+  test("report unknown keys at every depth of an inline call, like a declared parameter", async () => {
+    const create = c.bind(
+      c.endpoint("/users/{id}", {
+        method: "POST",
+        query: c.type<{ page?: number }>(),
+        headers: c.type<{ "x-a"?: string }>(),
+        body: c.json<{ name: string; tags?: { key: string }[] }>(),
+        responses: { 204: c.none() },
+      }),
+      fetchTransport(),
+    );
+    const body = { name: "Ada" };
+
+    // @ts-expect-error a path key that the template does not have
+    await create({ path: { id: 1, extra: 2 }, body });
+    // @ts-expect-error a misspelled query key next to a valid one
+    await create({ path: { id: 1 }, query: { page: 1, pgae: 2 }, body });
+    // @ts-expect-error a header key that the declaration does not have
+    await create({ path: { id: 1 }, headers: { "x-a": "1", "x-b": "2" }, body });
+    // @ts-expect-error a misspelled body key next to a valid one
+    await create({ path: { id: 1 }, body: { name: "Ada", nmae: "x" } });
+    // @ts-expect-error an unknown key in a nested body array
+    await create({ path: { id: 1 }, body: { name: "Ada", tags: [{ key: "a", value: "b" }] } });
+    // @ts-expect-error a misspelled call option
+    await create({ path: { id: 1 }, body, timout: 5 });
+    // @ts-expect-error a misspelled transport option
+    await create({ path: { id: 1 }, body, transport: { cache: "no-store", cahce: "x" } });
+
+    // A variable is not an object literal, so extra keys are allowed, as for any function.
+    const wide = { path: { id: 1 }, body: { name: "Ada", extra: 1 } };
+    await create(wide);
+    await create({ path: { id: 1 }, body, headers: { "x-a": "1" }, ...(flag ? { timeout: 5 } : {}) });
   });
 
   test("accept the same optional JSON values in calls and inferred inputs", async () => {
@@ -157,204 +199,21 @@ describe("bound calls", () => {
   });
 });
 
-describe("schemas and body kinds", () => {
-  test("infer recursive JSON request and response types", async () => {
-    interface Category {
-      name: string;
-      children: Category[];
-    }
-
-    const save = c.bind(
-      c.endpoint("/categories", {
-        method: "POST",
-        body: c.type<Category>(),
-        responses: { 200: c.type<Category>() },
-      }),
-      fetchTransport(),
-    );
-    const result = await save({ body: { name: "Root", children: [] } });
-
-    expectTypeOf<InferInput<typeof save>["body"]>().toEqualTypeOf<Category>();
-    expectTypeOf(result.body).toEqualTypeOf<Category>();
-    // @ts-expect-error the declared body still requires children
-    await save({ body: { name: "Root" } });
-  });
-
-  const transform = {
-    "~standard": {
-      version: 1,
-      vendor: "test",
-      validate: () => ({ value: { id: 7 } }),
-      types: {} as { input: string; output: { id: number } },
-    },
-  } as const;
-
-  test("infer the request schema input and response schema output", async () => {
-    const create = c.bind(
-      c.endpoint("/users", {
-        method: "POST",
-        body: transform,
-        responses: { 200: { body: { kind: "text", schema: transform } } },
-      }),
-      fetchTransport(),
-    );
-
-    expectTypeOf<InferInput<typeof create>["body"]>().toEqualTypeOf<string>();
-    expectTypeOf((await create({ body: "Ada" })).body).toEqualTypeOf<{ id: number }>();
-
-    // @ts-expect-error request input differs from the wire value
-    await create({ body: { id: 7 } });
-    // @ts-expect-error a dynamic flag may leave the request validator enabled
-    await create({ body: { id: 7 }, unchecked: flag });
-  });
-
-  test("check built-in schema kinds at declaration and native kinds at bind", async () => {
-    c.endpoint("/text", {
-      // @ts-expect-error text request schemas must produce strings
-      body: { kind: "text", schema: c.type<number>() },
-    });
-    const invalid = c.endpoint("/download", {
-      responses: { 200: { kind: "blob", schema: c.type<string>() } },
-    });
-    // @ts-expect-error Fetch decodes blob as Blob
-    c.bind(invalid, fetchTransport());
-
-    const download = c.bind(
-      c.endpoint("/download", { responses: { 200: "blob" } }),
-      fetchTransport(),
-    );
-    expectTypeOf((await download()).body).toEqualTypeOf<Blob>();
-
-    const stream = c.endpoint("/download", {
-      responses: { 200: { kind: "stream", schema: transform } },
-    });
-    // @ts-expect-error Fetch supplies a stream and this schema expects a string
-    c.bind(stream, fetchTransport());
-  });
-
-  test("check multipart file data when declaring the endpoint", () => {
-    c.endpoint("/files", {
-      body: { kind: "multipart", schema: c.type<{ file: { data: Uint8Array } }>() },
-    });
-
-    c.endpoint("/files", {
-      // @ts-expect-error a portable file descriptor needs binary data
-      body: { kind: "multipart", schema: c.type<{ file: { data: number } }>() },
-    });
-  });
-
-  test("require inputs valid for every possible request kind", async () => {
-    const body = flag ? "json" : "none";
-    const send = c.bind(
-      c.endpoint("/data", {
-        method: "POST",
-        body,
-        responses: { 204: "none" },
-      }),
-      fetchTransport(),
-    );
-
-    await send();
-    // @ts-expect-error the chosen kind may forbid a body
-    await send({ body: { id: 7 } });
-    await send({ unchecked: true, bodyKind: "json", body: { id: 7 } });
-  });
-
-  test("accept a stream request body only on Fetch", () => {
-    const upload = c.endpoint("/upload", {
+test("require inputs valid for every possible request kind", async () => {
+  const body = flag ? c.json() : c.none();
+  const send = c.bind(
+    c.endpoint("/data", {
       method: "POST",
-      body: "stream",
-      responses: { 204: "none" },
-    });
-    const send = c.bind(upload, fetchTransport());
-
-    void send({ body: new ReadableStream<Uint8Array>() });
-    // @ts-expect-error a stream body must be a ReadableStream
-    void send({ body: "text" });
-    // @ts-expect-error Playwright has no stream request kind
-    c.bind(upload, playwrightTransport({ context: {} as APIRequestContext }));
-  });
-
-  test("accept a blob request body only on Fetch", () => {
-    const upload = c.endpoint("/upload", {
-      method: "POST",
-      body: "blob",
-      responses: { 204: "none" },
-    });
-    const send = c.bind(upload, fetchTransport());
-
-    void send({ body: new Blob(["x"]) });
-    // @ts-expect-error a blob body must be a Blob
-    void send({ body: new Uint8Array([1]) });
-    // @ts-expect-error Playwright has no blob request kind
-    c.bind(upload, playwrightTransport({ context: {} as APIRequestContext }));
-  });
-
-  test("check each custom kind against the bound transport", () => {
-    const adapter: Transport<
-      { nativeText: string; nativeNumber: number },
-      { none: undefined }
-    > = async ({ url }) => ({ status: 204, url, headers: {}, read: async () => undefined });
-    const valid = flag
-      ? ({ kind: "nativeText", schema: c.type<string>() } as const)
-      : ({ kind: "nativeNumber", schema: c.type<number>() } as const);
-    c.bind(c.endpoint("/native", { body: valid, responses: { 204: "none" } }), adapter);
-
-    const invalid = flag
-      ? ({ kind: "nativeText", schema: c.type<number>() } as const)
-      : ({ kind: "nativeNumber", schema: c.type<string>() } as const);
-    // @ts-expect-error each union member must match its own transport kind
-    c.bind(c.endpoint("/native", { body: invalid, responses: { 204: "none" } }), adapter);
-  });
-});
-
-test("retain custom transport options, callback types, and response metadata", async () => {
-  type Options = { trace: { id: string }; onTrace?: (id: string) => void };
-  type Responses = Pick<ResponseKindMap, "json" | "none">;
-  const adapter: Transport<RequestKindMap, Responses, Options, { traceId: string }> = async ({
-    input,
-    url,
-  }) => {
-    const traceId = input?.trace.id ?? "";
-    input?.onTrace?.(traceId);
-    const decoded: Responses = { none: undefined, json: { id: 7 } };
-    return {
-      url,
-      status: 200,
-      headers: {},
-      transport: { traceId },
-      read: async <Kind extends keyof Responses>(kind: Kind) => decoded[kind],
-    };
-  };
-  const get = c.bind(
-    c.endpoint("/users/{id}", {
-      responses: { 200: c.type<{ id: number }>() },
+      body,
+      responses: { 204: c.none() },
     }),
-    adapter,
+    fetchTransport(),
   );
 
-  const input = {
-    path: { id: 7 },
-    trace: { id: "r1" },
-    onTrace: (id) => expectTypeOf(id).toEqualTypeOf<string>(),
-  } satisfies InferInput<typeof get>;
-
-  const result = await get(input);
-  expectTypeOf(result.transport?.traceId).toEqualTypeOf<string | undefined>();
-
-  const raw = await get({
-    unchecked: true,
-    path: "/malformed",
-    status: 400,
-    trace: { id: "r2" },
-    onTrace: (id) => expectTypeOf(id).toEqualTypeOf<string>(),
-  });
-  expectTypeOf(raw.status).toEqualTypeOf<400>();
-
-  // @ts-expect-error the transport requires trace
-  await get({ path: { id: 7 } });
-  // @ts-expect-error unchecked mode still requires the transport's trace option
-  await get({ unchecked: true, path: "/malformed" });
+  await send();
+  // @ts-expect-error the chosen kind may forbid a body
+  await send({ body: { id: 7 } });
+  await send({ body: c.raw({ id: 7 }, "json") });
 });
 
 test("narrow ClientError diagnostics by code", (error?: unknown) => {
@@ -379,4 +238,58 @@ test("narrow ClientError diagnostics by code", (error?: unknown) => {
     expectTypeOf(error.status).toEqualTypeOf<number>();
     expectTypeOf(error.schema).toEqualTypeOf<"headers" | "body" | undefined>();
   }
+});
+
+test("a body is part of the contract", () => {
+  const bound = c.bind(
+    {
+      ping: c.endpoint("/ping", { method: "POST", responses: { 204: c.none() } }),
+      save: c.endpoint("/save", { method: "POST", body: c.json(), responses: { 204: c.none() } }),
+    },
+    fetchTransport(),
+  );
+  // @ts-expect-error the endpoint declares no body
+  void bound.ping({ body: { x: 1 } });
+  void bound.ping({ body: c.raw({ x: 1 }, "json") });
+  void bound.save({ body: { x: 1 } });
+});
+
+test("a type hint with only optional keys makes its part optional", () => {
+  const bound = c.bind(
+    {
+      list: c.endpoint("/list", { query: c.type<{ page?: number }>(), headers: c.type<{ "x-trace"?: string }>() }),
+      find: c.endpoint("/find", { query: c.type<{ q: string }>() }),
+    },
+    fetchTransport(),
+  );
+  void bound.list({ status: 200 });
+  void bound.list({ query: { page: 2 }, status: 200 });
+  // @ts-expect-error the query has a required key
+  void bound.find({ status: 200 });
+});
+
+test("a typed field keeps its declared type", async () => {
+  type Page = { page?: number };
+  type Auth = { authorization?: string | undefined };
+  const list = c.bind(
+    c.endpoint("/users", { query: c.type<Page>(), headers: c.type<Auth>() }),
+    fetchTransport(),
+  );
+  const token = undefined as string | undefined;
+  const page = undefined as number | undefined;
+  await list({ headers: { authorization: token }, status: 200 });
+  // @ts-expect-error the declared type has no `undefined` for `page`
+  await list({ query: { page }, status: 200 });
+});
+
+test("optional arguments include every possible response", async () => {
+  const get = c.bind(c.endpoint("/", { responses: { 200: c.text() } }), fetchTransport());
+  expectTypeOf((await get()).body).toEqualTypeOf<string>();
+  expectTypeOf((await get(undefined)).status).toEqualTypeOf<200>();
+  expectTypeOf((await get({})).status).toEqualTypeOf<200>();
+  // @ts-expect-error explicit type arguments cannot promise a different status
+  get<[{ status: 418 }]>({ status: 200 });
+  const maybe = await get(maybeExpectation);
+  expectTypeOf(maybe.status).toEqualTypeOf<200 | 418>();
+  expectTypeOf(maybe.body).toEqualTypeOf<string | undefined>();
 });

@@ -3,7 +3,6 @@ import type { APIRequestContext, APIResponse } from "playwright-core";
 import { FailureWithCleanupError, ResponseCleanupError, transportError } from "./core/errors.js";
 import type {
   BinaryInput,
-  CommonOptions,
   Reference,
   RequestKindMap,
   ResponseHeaders,
@@ -26,7 +25,7 @@ import {
   prepareHeaders,
 } from "./http.js";
 
-interface PlaywrightMetadata {
+export interface PlaywrightMetadata {
   readonly timing: ReturnType<APIResponse["timing"]>;
 
   /**
@@ -46,13 +45,11 @@ type PlaywrightContext = Pick<APIRequestContext, "fetch">;
 
 type PlaywrightFetchOptions = NonNullable<Parameters<APIRequestContext["fetch"]>[1]>;
 
-type PlaywrightNativeOptions = CommonOptions & {
-  /** Passed to `fetch`. `maxRedirects` here overrides `follow`. */
-  readonly transport?: Pick<
-    PlaywrightFetchOptions,
-    "maxRedirects" | "maxRetries" | "ignoreHTTPSErrors" | "signal"
-  >;
-};
+/** Passed to `fetch`. `maxRedirects` here overrides `follow`. */
+type PlaywrightNativeOptions = Pick<
+  PlaywrightFetchOptions,
+  "maxRedirects" | "maxRetries" | "ignoreHTTPSErrors" | "signal"
+>;
 
 async function disposeAfterFailure(response: APIResponse, cause: unknown): Promise<never> {
   try {
@@ -203,6 +200,14 @@ function underUseBaseUrl(request: { readonly url: string; readonly reference: Re
     : request.url;
 }
 
+/** The transport that {@link playwrightTransport} returns. */
+export type PlaywrightTransport = Transport<
+  RequestKindMap,
+  ResponseKindMap,
+  PlaywrightNativeOptions,
+  PlaywrightMetadata
+>;
+
 /**
  * Send requests with Playwright and dispose each response after use.
  *
@@ -243,7 +248,7 @@ export function playwrightTransport(config: {
    * resolves them under `use.baseURL`.
    */
   readonly baseUrl?: string | undefined;
-}): Transport<RequestKindMap, ResponseKindMap, PlaywrightNativeOptions, PlaywrightMetadata> {
+}): PlaywrightTransport {
   const resolveUrl =
     config.baseUrl === undefined ? underUseBaseUrl : createUrlResolver(config.baseUrl);
 
@@ -252,8 +257,6 @@ export function playwrightTransport(config: {
     let prepared = false;
 
     try {
-      const input = request.input;
-
       // The request sets the headers, the body, and the URL; the options
       // never do.
       const {
@@ -263,7 +266,7 @@ export function playwrightTransport(config: {
         multipart: _multipart,
         params: _params,
         ...native
-      } = (input?.transport ?? {}) as PlaywrightFetchOptions;
+      } = (request.options ?? {}) as PlaywrightFetchOptions;
 
       const options: PlaywrightFetchOptions = {
         ...native,
@@ -304,12 +307,7 @@ export function playwrightTransport(config: {
       }
 
       if (request.headers !== undefined || body !== undefined) {
-        const selected = prepareHeaders(
-          request.headers,
-          request.bodyKind,
-          body !== undefined,
-          input?.unchecked === true,
-        );
+        const selected = prepareHeaders(request.headers, request.bodyKind, body !== undefined);
 
         if (selected.contentTypeSuppressed && body !== undefined) {
           throw new TypeError("Playwright cannot suppress Content-Type for a request with a body");
@@ -318,18 +316,18 @@ export function playwrightTransport(config: {
         options.headers = selected.fields;
       }
 
-      if (options.maxRedirects === undefined && input?.follow !== true) {
+      if (options.maxRedirects === undefined && !request.follow) {
         options.maxRedirects = 0;
       }
 
-      if (input?.timeout !== undefined) {
-        options.timeout = input.timeout;
+      if (request.timeout !== undefined) {
+        options.timeout = request.timeout;
       }
 
       prepared = true;
       return await PlaywrightResponseHandle.create(await config.context.fetch(url, options));
     } catch (failure) {
-      throw transportError(prepared, request.method, url, request.meta, failure);
+      throw transportError(prepared ? "transport" : "request", request, failure, url);
     }
   };
 }

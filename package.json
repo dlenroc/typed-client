@@ -35,8 +35,8 @@
   },
   "scripts": {
     "build": "tsdown",
-    "typecheck": "npm run build && tsc",
-    "test": "npm run build && vitest run --typecheck",
+    "typecheck": "npm run build && tsc && tsc -p test/loose",
+    "test": "npm run build && vitest run --typecheck && tsc -p test/loose",
     "prepack": "npm run build"
   },
   "devDependencies": {

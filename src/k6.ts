@@ -1,9 +1,9 @@
 import http from "k6/http";
 import type { FileData, Params, RequestBody, Response } from "k6/http";
+import type { Endpoint } from "./core/endpoint-types.js";
 import { transportError } from "./core/errors.js";
 import type {
   BinaryInput,
-  CommonOptions,
   Fields,
   FieldScalar,
   MultipartFile,
@@ -56,7 +56,7 @@ type K6Response = Omit<Response, "cookies" | "tls_cipher_suite"> & {
   readonly tls_cipher_suite: Response["tls_cipher_suite"] | "";
 };
 
-interface K6ResponseMetadata {
+export interface K6ResponseMetadata {
   /** Parsed `Set-Cookie` values by cookie name. */
   readonly cookies: K6Response["cookies"];
   readonly timings: K6Response["timings"];
@@ -75,13 +75,11 @@ interface K6ResponseMetadata {
 
 type K6Part = string | FileData | MultipartFile;
 
-type K6NativeOptions = CommonOptions & {
-  /**
-   * Passed to k6 as params. `redirects` here overrides `follow`.
-   * `timeout` here overrides `timeout`.
-   */
-  readonly transport?: Omit<Params, "headers" | "responseType">;
-};
+/**
+ * Passed to k6 as params. `redirects` here overrides `follow`.
+ * `timeout` here overrides `timeout`.
+ */
+type K6NativeOptions = Omit<Params, "headers" | "responseType">;
 
 function toK6ArrayBuffer(data: BinaryInput) {
   if (data instanceof ArrayBuffer) {
@@ -357,6 +355,35 @@ class K6ResponseHandle implements TransportResponse<ResponseKindMap, K6ResponseM
   }
 }
 
+type CaptureMode = "none" | "text" | "binary";
+
+function captureMode(endpoint: Endpoint): CaptureMode {
+  const responses = endpoint.responses;
+  const statuses = Object.keys(responses);
+  let mode: CaptureMode = "none";
+
+  for (let i = 0; i < statuses.length; i++) {
+    const kind = responses[statuses[i] as `${number}`]!.body.kind;
+    if (kind === "binary" || kind === "multipart") {
+      return "binary";
+    }
+
+    if (kind !== "none") {
+      mode = "text";
+    }
+  }
+
+  return mode;
+}
+
+/** The transport that {@link k6Transport} returns. */
+export type K6Transport = Transport<
+  K6RequestKinds,
+  ResponseKindMap,
+  K6NativeOptions,
+  K6ResponseMetadata
+>;
+
 /**
  * Send requests with `k6/http`.
  *
@@ -389,7 +416,7 @@ export function k6Transport(
     /** @defaultValue The `k6/http` module */
     readonly http?: K6Http;
   } = {},
-): Transport<K6RequestKinds, ResponseKindMap, K6NativeOptions, K6ResponseMetadata> {
+): K6Transport {
   const httpApi = config.http ?? http;
   const resolveUrl = createUrlResolver(config.baseUrl);
 
@@ -398,16 +425,10 @@ export function k6Transport(
     let prepared = false;
 
     try {
-      const input = request.input;
       const selected =
         request.headers === undefined && request.body === undefined
           ? undefined
-          : prepareHeaders(
-              request.headers,
-              request.bodyKind,
-              request.body !== undefined,
-              input?.unchecked === true,
-            );
+          : prepareHeaders(request.headers, request.bodyKind, request.body !== undefined);
       const contentTypeSuppressed = selected?.contentTypeSuppressed === true;
 
       let body: RequestBody | null = null;
@@ -465,30 +486,16 @@ export function k6Transport(
         }
       }
 
-      let responseType: "none" | "text" | "binary" = "none";
-      const kinds = request.responseKinds;
-      for (let i = 0; i < kinds.length; i++) {
-        const kind = kinds[i];
-        if (kind === "binary" || kind === "multipart") {
-          responseType = "binary";
-          break;
-        }
-
-        if (kind !== "none") {
-          responseType = "text";
-        }
-      }
-
-      const native = input?.transport;
+      const responseType = request.discard ? "none" : captureMode(request.endpoint);
+      const native = request.options;
       const params: Record<string, unknown> =
         native === undefined ? { responseType } : { ...native, headers: undefined, responseType };
 
-      const timeout = input?.timeout;
-      if (timeout !== undefined && params.timeout === undefined) {
-        params.timeout = timeout;
+      if (request.timeout !== undefined && params.timeout === undefined) {
+        params.timeout = request.timeout;
       }
 
-      if (input?.follow !== true && params.redirects === undefined) {
+      if (!request.follow && params.redirects === undefined) {
         params.redirects = 0;
       }
 
@@ -500,7 +507,7 @@ export function k6Transport(
       const response = await httpApi.asyncRequest(request.method, url, body, params as Params);
       return new K6ResponseHandle(response as unknown as K6Response);
     } catch (failure) {
-      throw transportError(prepared, request.method, url, request.meta, failure);
+      throw transportError(prepared ? "transport" : "request", request, failure, url);
     }
   };
 }

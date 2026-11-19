@@ -2,7 +2,7 @@ import { inspect } from "node:util";
 import { describe, expect, test, vi } from "vitest";
 import { c, ClientError } from "@dlenroc/typed-client";
 import { fetchTransport } from "@dlenroc/typed-client/fetch";
-import { mockTransport, schema } from "./fixtures.ts";
+import { mockTransport, recorder, schema, users, withToken } from "./fixtures.ts";
 
 const issues = [{ path: ["name"], message: "Expected string" }];
 const cause = new Error("validator failed");
@@ -16,16 +16,12 @@ describe("request errors", () => {
     "reject %s schema issues before calling the transport",
     async (part) => {
       const { adapter } = mockTransport();
-      const call = c.bind(
-        c.endpoint("/users", {
-          method: "POST",
-          [part]: invalid,
-          responses: { 200: "json" },
-        }),
-        adapter,
-      );
+      const definition = { method: "POST", responses: { 200: c.json() } };
+      const result = part === "body"
+        ? c.bind(c.endpoint("/users", { ...definition, body: c.json(invalid) }), adapter)()
+        : c.bind(c.endpoint("/users", { ...definition, [part]: invalid }), adapter)();
 
-      await expect(call()).rejects.toMatchObject({
+      await expect(result).rejects.toMatchObject({
         code: "request",
         schema: part,
         issues,
@@ -39,8 +35,8 @@ describe("request errors", () => {
     const { adapter } = mockTransport();
     const call = c.bind(
       c.endpoint("/users", {
-        body: rejected,
-        responses: { 200: "json" },
+        body: c.json(rejected),
+        responses: { 200: c.json() },
       }),
       adapter,
     );
@@ -91,7 +87,7 @@ describe("request errors", () => {
   test("report JSON serialization failures before sending", async () => {
     const send = vi.fn<typeof fetch>();
     const post = c.bind(
-      c.endpoint("/users", { method: "POST", responses: { 204: "none" } }),
+      c.endpoint("/users", { method: "POST", body: c.json(), responses: { 204: c.none() } }),
       fetchTransport({ fetch: send }),
     );
 
@@ -110,7 +106,7 @@ describe("request errors", () => {
       }),
     );
 
-    await expect(get({ unchecked: true, method: "PATCH", status: 200 })).rejects.toMatchObject({
+    await expect(get({ method: c.raw("PATCH"), status: 200 })).rejects.toMatchObject({
       code: "transport",
       method: "PATCH",
       url: "https://api.test/v1/users",
@@ -129,7 +125,7 @@ describe("response errors", () => {
     const { adapter, response } = mockTransport();
     const get = c.bind(
       c.endpoint("/users", {
-        responses: { 200: { body: "json", [part]: invalid } },
+        responses: { 200: part === "body" ? { body: c.json(invalid) } : { body: c.json(), headers: invalid } },
       }),
       adapter,
     );
@@ -156,7 +152,7 @@ describe("response errors", () => {
     });
     const get = c.bind(
       c.endpoint("/users", {
-        responses: { 200: { body: "json", headers: invalid } },
+        responses: { 200: { body: c.json(), headers: invalid } },
       }),
       adapter,
     );
@@ -181,7 +177,7 @@ describe("response errors", () => {
     const { adapter, response } = mockTransport({ status });
     const discard = vi.fn(async () => {});
     Object.assign(response, { discard });
-    const get = c.bind(c.endpoint("/users", { responses: { 200: invalid } }), adapter);
+    const get = c.bind(c.endpoint("/users", { responses: { 200: c.json(invalid) } }), adapter);
 
     await expect(get()).rejects.toBeInstanceOf(ClientError);
     expect(response.read).toHaveBeenCalledExactlyOnceWith(kind);
@@ -197,7 +193,7 @@ describe("response errors", () => {
         throw cause;
       },
     });
-    const get = c.bind(c.endpoint("/users", { responses: { 200: kind } }), adapter);
+    const get = c.bind(c.endpoint("/users", { responses: { 200: c.kind(kind) } }), adapter);
 
     await expect(get()).rejects.toMatchObject({
       ...error,
@@ -214,7 +210,7 @@ test("ClientError preserves structured diagnostics through JSON serialization", 
   const meta = { operationId: "getUser" };
   const { adapter } = mockTransport();
   const get = c.bind(
-    c.endpoint("/users/7", { meta, responses: { 200: schema(() => ({ issues })) } }),
+    c.endpoint("/users/7", { meta, responses: { 200: c.json(schema(() => ({ issues }))) } }),
     adapter,
   );
   const error: unknown = await get().catch((failure: unknown) => failure);
@@ -262,7 +258,7 @@ describe("error messages", () => {
     ];
     const { adapter } = mockTransport();
     const get = c.bind(
-      c.endpoint("/users/7", { responses: { 200: schema(() => ({ issues: twoIssues })) } }),
+      c.endpoint("/users/7", { responses: { 200: c.json(schema(() => ({ issues: twoIssues }))) } }),
       adapter,
     );
     const error: unknown = await get().catch((failure: unknown) => failure);
@@ -278,7 +274,7 @@ describe("error messages", () => {
   test("give the request URL with its query and fragment", async () => {
     const offline = new Error("offline");
     const get = c.bind(
-      c.endpoint("/users?page=2#top", { responses: { 200: "none" } }),
+      c.endpoint("/users?page=2#top", { responses: { 200: c.none() } }),
       fetchTransport({
         baseUrl: "https://api.test",
         fetch: async () => {
@@ -427,5 +423,24 @@ describe("error messages", () => {
     const error = clientError("Unexpected status 500", "/x");
 
     expect(inspect(error)).toMatch(/^ClientError: Unexpected status 500 for GET \/x/);
+  });
+});
+
+describe("error codes", () => {
+  test("a failure of a decorator has the code transport", async () => {
+    const { transport } = recorder();
+    const failure = new Error("no token");
+    const api = c.bind(users, withToken(transport, async () => Promise.reject(failure)));
+    const error = await api.get({ path: { id: 1 } }).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(ClientError);
+    expect(error).toMatchObject({ code: "transport", method: "GET", url: "/users/1", cause: failure });
+  });
+
+  test("a status outside the accepted set has the code status", async () => {
+    const { transport } = recorder();
+    await expect(c.bind(users, transport).get({ path: { id: 1 }, status: 200 })).rejects.toMatchObject({
+      code: "status",
+      status: 204,
+    });
   });
 });

@@ -82,16 +82,11 @@ export interface PreparedHeaders {
   readonly contentTypeSuppressed: boolean;
 }
 
-/**
- * Merge names that differ only in case and add the default `Content-Type`.
- * A checked multipart body drops the caller's `Content-Type`, because the
- * encoder sets the boundary.
- */
+/** Merge names that differ only in case and add the default `Content-Type`. */
 export function prepareHeaders(
   headers: HeaderInput | undefined,
   bodyKind: string,
   bodyPresent: boolean,
-  unchecked: boolean,
 ): PreparedHeaders {
   const fields: Record<string, string> = Object.create(null);
 
@@ -128,12 +123,7 @@ export function prepareHeaders(
   const contentTypeName = spellings["content-type"];
   let contentType = contentTypeName === undefined ? undefined : fields[contentTypeName];
 
-  if (bodyPresent && bodyKind === "multipart" && !unchecked) {
-    if (contentTypeName !== undefined) {
-      delete fields[contentTypeName];
-      contentType = undefined;
-    }
-  } else if (bodyPresent && contentType === undefined && !contentTypeSuppressed) {
+  if (bodyPresent && contentType === undefined && !contentTypeSuppressed) {
     contentType = defaultContentType(bodyKind);
     if (contentType !== undefined) {
       fields["content-type"] = contentType;
@@ -530,7 +520,7 @@ export function decodeMultipart(
     }
 
     if (name !== undefined) {
-      const data = bytes.subarray(bodyStart, next.at);
+      const data = bytes.subarray(bodyStart, next.at) as Uint8Array<ArrayBuffer>;
       appendValue(
         result,
         name,

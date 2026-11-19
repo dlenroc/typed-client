@@ -241,19 +241,22 @@ export function failureCause(failure: unknown): unknown {
 }
 
 export function transportError(
-  prepared: boolean,
-  method: string,
-  url: string,
-  meta: Meta,
+  code: "request" | "transport",
+  request: {
+    readonly method: string;
+    readonly url: string;
+    readonly endpoint: { readonly meta: Meta };
+  },
   failure: unknown,
+  url: string = request.url,
 ): ClientError {
   return preserveCleanupError(
     new ClientError({
-      code: prepared ? "transport" : "request",
-      summary: prepared ? "Cannot get response" : "Cannot prepare request",
-      method,
+      code,
+      summary: code === "transport" ? "Cannot get response" : "Cannot prepare request",
+      method: request.method,
       url,
-      meta,
+      meta: request.endpoint.meta,
       cause: failureCause(failure),
     }),
     failure,

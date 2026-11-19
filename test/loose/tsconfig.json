@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "strict": false,
+    "exactOptionalPropertyTypes": false,
+    "noImplicitAny": true
+  },
+  "include": ["*.ts"],
+  "exclude": []
+}
