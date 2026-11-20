@@ -1,6 +1,6 @@
 {
   "name": "@dlenroc/typed-client",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "Contract-first typed HTTP client for Fetch, Playwright and k6",
   "license": "MIT",
   "repository": {
