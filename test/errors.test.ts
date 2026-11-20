@@ -19,9 +19,11 @@ describe("request errors", () => {
     async (part) => {
       const { adapter } = mockTransport();
       const definition = { method: "POST", responses: { 200: c.json() } };
-      const result = part === "body"
-        ? c.bind(c.endpoint("/users", { ...definition, body: c.json(invalid) }), adapter)()
-        : c.bind(c.endpoint("/users", { ...definition, [part]: invalid }), adapter)();
+
+      const result =
+        part === "body"
+          ? c.bind(c.endpoint("/users", { ...definition, body: c.json(invalid) }), adapter)()
+          : c.bind(c.endpoint("/users", { ...definition, [part]: invalid }), adapter)();
 
       await expect(result).rejects.toMatchObject({
         code: "request",
@@ -230,6 +232,7 @@ describe("the response in errors", () => {
       read: textRead('{"error":"boom"}'),
     });
     const get = c.bind(c.endpoint("/users", { responses: { 200: c.json() } }), adapter);
+
     const error: unknown = await get().catch((failure: unknown) => failure);
 
     expect.assert(error instanceof ClientError && error.code === "status");
@@ -264,10 +267,12 @@ describe("the response in errors", () => {
     const { adapter, response } = mockTransport({ status: 500, read: textRead(text) });
     Object.assign(response, { url });
     const get = c.bind(c.endpoint("/users/7", { responses: { 200: c.none() } }), adapter);
+
     const error: unknown = await get().catch((failure: unknown) => failure);
 
     expect.assert(error instanceof ClientError && error.code === "status");
     expect(error.body).toBe(text);
+
     const [, shown] = error.message.split("\n");
     expect(shown).toBe(`https://api.test/users/7 ${"x".repeat(1000 - url.length - 1)}…`);
     expect(error.message).not.toContain("secret");
@@ -308,6 +313,7 @@ describe("the response in errors", () => {
       c.endpoint("/users", { responses: { 200: { headers: invalid, body: c.json() } } }),
       playwrightTransport({ context: { fetch: async () => native } }),
     );
+
     const error: unknown = await get({ discard }).catch((caught: unknown) => caught);
 
     expect.assert(error instanceof ClientError);
@@ -340,6 +346,7 @@ describe("the response in errors", () => {
     const headers = { "x-request-id": "r1" };
     const { adapter } = mockTransport({ headers, ...(read && { read }) });
     const get = c.bind(c.endpoint("/users", { responses }), adapter);
+
     const error: unknown = await get().catch((failure: unknown) => failure);
 
     expect.assert(error instanceof ClientError && error.code === "response");
@@ -366,6 +373,7 @@ test("ClientError preserves structured diagnostics through JSON serialization", 
     c.endpoint("/users/7", { meta, responses: { 200: c.json(schema(() => ({ issues }))) } }),
     adapter,
   );
+
   const error: unknown = await get().catch((failure: unknown) => failure);
 
   expect.assert(error instanceof ClientError);
@@ -373,6 +381,7 @@ test("ClientError preserves structured diagnostics through JSON serialization", 
   expect(error.meta).toBe(meta);
   expect(error.message).toMatch(/body.*1 issue.*200/);
   expect(error.stack).toMatch(/^ClientError: Response body/);
+
   expect(Object.keys(error)).toEqual([
     "code",
     "method",
@@ -418,6 +427,7 @@ describe("error messages", () => {
       c.endpoint("/users/7", { responses: { 200: c.json(schema(() => ({ issues: twoIssues }))) } }),
       adapter,
     );
+
     const error: unknown = await get().catch((failure: unknown) => failure);
 
     expect.assert(error instanceof ClientError);
@@ -442,6 +452,7 @@ describe("error messages", () => {
       }),
       adapter,
     );
+
     const error: unknown = await post({ path: { id: "x" } }).catch((failure: unknown) => failure);
 
     expect.assert(error instanceof ClientError);
@@ -462,6 +473,7 @@ describe("error messages", () => {
         },
       }),
     );
+
     const error: unknown = await get().catch((failure: unknown) => failure);
 
     expect.assert(error instanceof ClientError);
@@ -472,6 +484,7 @@ describe("error messages", () => {
 
   test("give the cause when no issue explains the failure", async () => {
     const get = c.bind(c.endpoint("/users/{id}"), fetchTransport());
+
     const error: unknown = await get({ path: {} as { id: string }, status: 200 }).catch(
       (failure: unknown) => failure,
     );
@@ -613,7 +626,9 @@ describe("error codes", () => {
     const { transport } = recorder();
     const failure = new Error("no token");
     const api = c.bind(users, withToken(transport, async () => Promise.reject(failure)));
+
     const error = await api.get({ path: { id: 1 } }).catch((caught: unknown) => caught);
+
     expect(error).toBeInstanceOf(ClientError);
     expect(error).toMatchObject({ code: "transport", method: "GET", url: "/users/1", cause: failure });
   });
@@ -623,20 +638,30 @@ describe("error codes", () => {
     const token = c.endpoint("/token", { meta, responses: { 200: c.none() } });
     const users = c.endpoint("/users", { meta, responses: { 200: c.none() } });
     const getToken = c.bind(token, mockTransport({ status: 503 }).adapter);
-    const getUsers = c.bind(users, withToken(recorder().transport, async () => {
-      await getToken();
-      return "token";
-    }));
+    const getUsers = c.bind(
+      users,
+      withToken(recorder().transport, async () => {
+        await getToken();
+        return "token";
+      }),
+    );
 
     await expect(getUsers()).rejects.toMatchObject({
-      code: "transport", url: "/users", status: undefined,
+      code: "transport",
+      url: "/users",
+      status: undefined,
       cause: { code: "status", status: 503 },
     });
   });
 
   test("bind converts a built-in transport failure into a ClientError", async () => {
     const cause = new Error("offline");
-    const adapter = fetchTransport({ baseUrl: "https://api.test", fetch: async () => { throw cause; } });
+    const adapter = fetchTransport({
+      baseUrl: "https://api.test",
+      fetch: async () => {
+        throw cause;
+      },
+    });
     const wrapped: typeof adapter = async (request) => {
       try {
         return await adapter(request);
@@ -648,24 +673,35 @@ describe("error codes", () => {
       }
     };
     const get = c.bind(c.endpoint("/users"), wrapped);
+
     const failure: unknown = await get({ status: 200 }).catch((error: unknown) => error);
+
     expect(failure).toBeInstanceOf(ClientError);
     expect(failure).toMatchObject({ code: "transport", url: "https://api.test/users", cause });
   });
 
   test("a nested adapter timeout keeps its code on the inner error", async () => {
     const failure = new DOMException("late", "TimeoutError");
-    const token = c.bind(c.endpoint("/token"), fetchTransport({
-      baseUrl: "https://auth.test",
-      fetch: async () => { throw failure; },
-    }));
-    const users = c.bind(c.endpoint("/users"), withToken(recorder().transport, async () => {
-      await token({ status: 200 });
-      return "token";
-    }));
+    const token = c.bind(
+      c.endpoint("/token"),
+      fetchTransport({
+        baseUrl: "https://auth.test",
+        fetch: async () => {
+          throw failure;
+        },
+      }),
+    );
+    const users = c.bind(
+      c.endpoint("/users"),
+      withToken(recorder().transport, async () => {
+        await token({ status: 200 });
+        return "token";
+      }),
+    );
 
     await expect(users({ status: 200 })).rejects.toMatchObject({
-      code: "transport", url: "/users",
+      code: "transport",
+      url: "/users",
       cause: { code: "timeout", url: "https://auth.test/token", cause: failure },
     });
   });
@@ -684,6 +720,7 @@ describe("error codes", () => {
 
   test("a status outside the accepted set has the code status", async () => {
     const { transport } = recorder();
+
     await expect(c.bind(users, transport).get({ path: { id: 1 }, status: 200 })).rejects.toMatchObject({
       code: "status",
       status: 204,

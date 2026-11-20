@@ -42,7 +42,6 @@ export interface PlaywrightMetadata {
 }
 
 type PlaywrightContext = Pick<APIRequestContext, "fetch">;
-
 type PlaywrightFetchOptions = NonNullable<Parameters<APIRequestContext["fetch"]>[1]>;
 
 /** Passed to `fetch`. `maxRedirects` here overrides `follow`. */
@@ -64,6 +63,7 @@ async function disposeAfterFailure(response: APIResponse, cause: unknown): Promi
 class PlaywrightResponseHandle implements TransportResponse<ResponseKindMap, PlaywrightMetadata> {
   readonly status: number;
   readonly url: string;
+
   private consumed = false;
 
   private constructor(
@@ -148,9 +148,7 @@ function asBuffer(data: BinaryInput) {
   return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
 }
 
-function playwrightMultipart(
-  fields: RequestKindMap["multipart"],
-): NonNullable<PlaywrightFetchOptions["multipart"]> {
+function playwrightMultipart(fields: RequestKindMap["multipart"]): NonNullable<PlaywrightFetchOptions["multipart"]> {
   if (fields instanceof FormData) {
     return fields;
   }

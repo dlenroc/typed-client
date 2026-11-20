@@ -6,12 +6,15 @@ declare const flag: boolean;
 
 test("record fields can accept either one value or repeated values", async () => {
   interface Filters { tag: string | readonly string[] }
-  const get = c.bind(c.endpoint("/", {
-    query: c.type<Filters>(),
-    responses: { 200: c.none() },
-  }), fetchTransport());
+
+  const get = c.bind(
+    c.endpoint("/", { query: c.type<Filters>(), responses: { 200: c.none() } }),
+    fetchTransport(),
+  );
+
   await get({ query: { tag: "a" } });
   await get({ query: { tag: ["a", "b"] } });
+
   c.endpoint("/", { body: c.urlencoded<Filters>() });
   c.endpoint("/", { body: c.multipart<Filters>() });
   // @ts-expect-error Every array element must be a wire scalar
@@ -29,6 +32,7 @@ test("conditionally present declarations must be narrowed before use", () => {
   c.endpoint("/", { responses: { 204: c.none(), ...(flag && { 200: c.text() }) } });
   // @ts-expect-error A missing response body changes its decoded value
   c.endpoint("/", { responses: { 200: { ...(flag && { body: c.text() }) } } });
+
   const ok = { responses: { 200: c.text() } };
   const missing = { responses: { 404: c.json<{ message: string }>() } };
   // @ts-expect-error Each branch has a different set of statuses
@@ -36,8 +40,11 @@ test("conditionally present declarations must be narrowed before use", () => {
 
   // Narrow before declaring the endpoint, or choose a kind for a stable status.
   const transport = fetchTransport();
-  const result = flag ? c.bind(c.endpoint("/", ok), transport)() : c.bind(c.endpoint("/", missing), transport)();
+  const result = flag
+    ? c.bind(c.endpoint("/", ok), transport)()
+    : c.bind(c.endpoint("/", missing), transport)();
   expectTypeOf<Awaited<typeof result>["status"]>().toEqualTypeOf<200 | 404>();
+
   const varied = c.bind(c.endpoint("/", { responses: { 200: flag ? c.text() : c.binary() } }), transport);
   expectTypeOf<Awaited<ReturnType<typeof varied>>["body"]>().toMatchTypeOf<string | Uint8Array | undefined>();
 });
@@ -75,6 +82,7 @@ describe("endpoint declarations", () => {
       }),
       fetchTransport(),
     );
+
     expectTypeOf((await send({ body: { page: 1 }, status: 200 })).body).toEqualTypeOf<"ok">();
     expectTypeOf((await send({ body: { page: 1 }, status: 201 })).body.token).toEqualTypeOf<string>();
 
@@ -87,6 +95,7 @@ describe("endpoint declarations", () => {
   test("keep kinds when a definition is declared before the call", async () => {
     const definition = { method: "POST", body: c.json<{ name: string }>(), responses: { 201: c.text() } };
     const create = c.bind(c.endpoint("/users", definition), fetchTransport());
+
     expectTypeOf((await create({ body: { name: "Ada" } })).body).toEqualTypeOf<string>();
   });
 });

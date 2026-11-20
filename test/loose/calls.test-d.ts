@@ -1,6 +1,12 @@
 // Type checks without `strictNullChecks`, the default when `strict` is off.
 import { expectTypeOf, test } from "vitest";
-import { c, type InferInput, type Operation, type ResponseKindMap, type Transport } from "@dlenroc/typed-client";
+import {
+  c,
+  type InferInput,
+  type Operation,
+  type ResponseKindMap,
+  type Transport,
+} from "@dlenroc/typed-client";
 import { fetchTransport } from "@dlenroc/typed-client/fetch";
 
 type User = { id: number; name: string };
@@ -51,6 +57,7 @@ test("required parts stay required and optional parts stay optional", async () =
 });
 
 declare const stringJson: Transport<{ json: string }, ResponseKindMap>;
+
 test("portable operations require compatible body inputs with strictFunctionTypes off", () => {
   const json = c.endpoint("/json", { body: c.json(), responses: { 200: c.json() } });
   // @ts-expect-error portable callers can send a JSON object

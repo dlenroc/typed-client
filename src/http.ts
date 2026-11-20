@@ -134,11 +134,7 @@ export function prepareHeaders(
 }
 
 /** Add a value under `key`. A repeated key collects its values in an array. */
-export function appendValue<Value>(
-  target: Record<string, Value | Value[]>,
-  key: string,
-  value: Value,
-): void {
+export function appendValue<Value>(target: Record<string, Value | Value[]>, key: string, value: Value): void {
   const previous = target[key];
 
   if (previous === undefined) {
@@ -155,11 +151,7 @@ export function appendValue<Value>(
  * its values with `", "`, which HTTP treats as the same. `Set-Cookie`
  * values can contain commas, so they are joined with a newline.
  */
-export function appendResponseHeader(
-  target: Record<string, string>,
-  name: string,
-  value: string,
-): void {
+export function appendResponseHeader(target: Record<string, string>, name: string, value: string): void {
   const key = name.toLowerCase();
   const previous = target[key];
 
@@ -186,10 +178,7 @@ export function encodeUtf8(value: string) {
   return (encoder ??= new TextEncoder()).encode(value);
 }
 
-export function forEachField<Value>(
-  fields: Fields<Value>,
-  emit: (name: string, value: Value) => void,
-): void {
+export function forEachField<Value>(fields: Fields<Value>, emit: (name: string, value: Value) => void): void {
   if (Array.isArray(fields)) {
     for (let i = 0; i < fields.length; i++) {
       const pair = fields[i]!;
@@ -225,9 +214,8 @@ function encodeFormValue(value: string) {
   } catch {
     encoded = encodeURIComponent(value.replace(/[\uD800-\uDFFF]/gu, "\uFFFD"));
   }
-  return encoded
-    .replace(formEscapes, escapeFormCharacter)
-    .replaceAll("%20", "+");
+
+  return encoded.replace(formEscapes, escapeFormCharacter).replaceAll("%20", "+");
 }
 
 export function asSearchParams(fields: URLSearchParams | Fields<FieldScalar>) {
@@ -370,7 +358,6 @@ export function decodeUrlEncoded(text: string): UrlEncodedResponse {
 }
 
 const multipartParameter = /;\s*([^=;\s]+)\s*=\s*(?:"([^"\\]*(?:\\.[^"\\]*)*)"|([^";\s]+))/g;
-
 const quotedEscape = /\\(.)/g;
 const partDisposition = /(?:^|\r\n)content-disposition:\s*([^\r\n]+)/i;
 const partMediaType = /(?:^|\r\n)content-type:\s*([^\r\n]+)/i;
@@ -385,10 +372,7 @@ function parameterValue(match: RegExpExecArray) {
       : quoted;
 }
 
-export function decodeMultipart(
-  bytes: Uint8Array,
-  header: string | undefined,
-): MultipartResponse {
+export function decodeMultipart(bytes: Uint8Array, header: string | undefined): MultipartResponse {
   let boundaryValue: string | undefined;
 
   if (header !== undefined) {

@@ -59,7 +59,6 @@ export type Echo = {
 export const testWithServer = test.extend("baseUrl", async ({}, { onCleanup }) => {
   const server = createServer(async (request, response) => {
     const chunks = [];
-
     for await (const chunk of request) {
       chunks.push(chunk);
     }
@@ -129,7 +128,6 @@ export const testWithServer = test.extend("baseUrl", async ({}, { onCleanup }) =
   );
 
   const address = server.address();
-
   if (!address || typeof address === "string") {
     throw new Error("Expected a TCP server address");
   }
@@ -149,16 +147,25 @@ export function recorder() {
       return new Response(null, { status: 204 });
     },
   });
+
   return { sent, transport };
 }
 
 // No cast: the decorator names the four type parameters of the transport.
-export function withToken<Requests extends object, Responses extends object, Options, Metadata extends object>(
+export function withToken<
+  Requests extends object,
+  Responses extends object,
+  Options,
+  Metadata extends object,
+>(
   next: Transport<Requests, Responses, Options, Metadata>,
   token: () => string | Promise<string>,
 ): Transport<Requests, Responses, Options, Metadata> {
   return async (request) =>
-    next({ ...request, headers: { authorization: `Bearer ${await token()}`, ...request.headers } });
+    next({
+      ...request,
+      headers: { authorization: `Bearer ${await token()}`, ...request.headers },
+    });
 }
 
 export const users = { get: c.endpoint("/users/{id}", { responses: { 204: c.none() } }) };

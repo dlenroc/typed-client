@@ -76,6 +76,7 @@ class FetchResponseHandle implements TransportResponse<FetchResponseKinds, Fetch
   readonly url: string;
   readonly headers: ResponseHeaders;
   readonly transport: FetchMetadata;
+
   private state: "unread" | "read" | "stream" = "unread";
 
   constructor(
@@ -149,11 +150,13 @@ class FetchResponseHandle implements TransportResponse<FetchResponseKinds, Fetch
       // Native formData() also accepts URL-encoded bodies.
       if (!/^multipart\/form-data\s*(?:;|$)/i.test(this.headers["content-type"] ?? "")) {
         const error = new TypeError("Multipart response is not multipart/form-data");
+
         try {
           await this.releaseUnreadBody();
         } catch (cleanupError) {
           throw new FailureWithCleanupError(error, cleanupError);
         }
+
         throw error;
       }
 
@@ -248,7 +251,6 @@ export function fetchTransport(
       }
 
       let body: BodyInit | undefined;
-
       if (request.body !== undefined) {
         switch (request.bodyKind) {
           case "none":

@@ -50,6 +50,7 @@ describe("bound calls", () => {
       c.endpoint("/jobs/{id}:cancel/{file}.json?x={y}", { responses: { 204: c.none() } }),
       fetchTransport(),
     );
+
     ({ path: { id: 1, file: "a" } }) satisfies InferInput<typeof job>;
     // @ts-expect-error each `{name}` in the path is required
     ({ path: { id: 1 } }) satisfies InferInput<typeof job>;
@@ -106,6 +107,7 @@ describe("bound calls", () => {
       discard: true,
       transport: { cache: "no-store" },
     });
+
     expectTypeOf(malformed.status).toEqualTypeOf<200 | 422>();
     expectTypeOf(malformed.body).toEqualTypeOf<undefined>();
 
@@ -131,11 +133,14 @@ describe("bound calls", () => {
     await api.getUser({ path: { id: 7 }, query: c.raw(5) });
     // @ts-expect-error a raw path parameter is a string
     await api.getUser({ path: { id: c.raw(5) } });
+
     const id = c.raw("a/b");
     await api.getUser({ path: { id } });
     await api.getUser({ path: id });
+
     const stored = c.raw("{bad", "text");
     await api.getUser({ path: { id: 7 }, body: stored });
+
     // @ts-expect-error a raw path is a string
     await api.getUser({ path: c.raw(7) });
     // @ts-expect-error other fields stay checked next to a raw part
@@ -180,6 +185,7 @@ describe("bound calls", () => {
     interface User {
       name: string;
     }
+
     const user: User = { name: "Ada" };
     const input = { body: user } satisfies InferInput<typeof api.post>;
 
@@ -228,6 +234,7 @@ test("narrow ClientError diagnostics by code", (error?: unknown) => {
     expectTypeOf(error.headers).toEqualTypeOf<ResponseHeaders>();
     expectTypeOf(error.body).toEqualTypeOf<string | undefined>();
   }
+
   if (error.code === "request") {
     expectTypeOf(error.status).toEqualTypeOf<undefined>();
     expectTypeOf(error.headers).toEqualTypeOf<undefined>();
@@ -235,14 +242,17 @@ test("narrow ClientError diagnostics by code", (error?: unknown) => {
     expectTypeOf(error.schema).toEqualTypeOf<"path" | "query" | "headers" | "body" | undefined>();
     expectTypeOf(error.issues?.[0]?.message).toEqualTypeOf<string | undefined>();
   }
+
   if (error.code === "transport") {
     expectTypeOf(error.status).toEqualTypeOf<number | undefined>();
     expectTypeOf(error.headers).toEqualTypeOf<undefined>();
   }
+
   if (error.code === "timeout") {
     expectTypeOf(error.status).toEqualTypeOf<number | undefined>();
     expectTypeOf(error.body).toEqualTypeOf<undefined>();
   }
+
   if (error.code === "response") {
     expectTypeOf(error.status).toEqualTypeOf<number>();
     expectTypeOf(error.schema).toEqualTypeOf<"headers" | "body" | undefined>();
@@ -259,6 +269,7 @@ test("a body is part of the contract", () => {
     },
     fetchTransport(),
   );
+
   // @ts-expect-error the endpoint declares no body
   void bound.ping({ body: { x: 1 } });
   void bound.ping({ body: c.raw({ x: 1 }, "json") });
@@ -268,11 +279,15 @@ test("a body is part of the contract", () => {
 test("a type hint with only optional keys makes its part optional", () => {
   const bound = c.bind(
     {
-      list: c.endpoint("/list", { query: c.type<{ page?: number }>(), headers: c.type<{ "x-trace"?: string }>() }),
+      list: c.endpoint("/list", {
+        query: c.type<{ page?: number }>(),
+        headers: c.type<{ "x-trace"?: string }>(),
+      }),
       find: c.endpoint("/find", { query: c.type<{ q: string }>() }),
     },
     fetchTransport(),
   );
+
   void bound.list({ status: 200 });
   void bound.list({ query: { page: 2 }, status: 200 });
   // @ts-expect-error the query has a required key
@@ -288,6 +303,7 @@ test("a typed field keeps its declared type", async () => {
   );
   const token = undefined as string | undefined;
   const page = undefined as number | undefined;
+
   await list({ headers: { authorization: token }, status: 200 });
   // @ts-expect-error the declared type has no `undefined` for `page`
   await list({ query: { page }, status: 200 });
@@ -295,11 +311,13 @@ test("a typed field keeps its declared type", async () => {
 
 test("optional arguments include every possible response", async () => {
   const get = c.bind(c.endpoint("/", { responses: { 200: c.text() } }), fetchTransport());
+
   expectTypeOf((await get()).body).toEqualTypeOf<string>();
   expectTypeOf((await get(undefined)).status).toEqualTypeOf<200>();
   expectTypeOf((await get({})).status).toEqualTypeOf<200>();
   // @ts-expect-error explicit type arguments cannot promise a different status
   get<[{ status: 418 }]>({ status: 200 });
+
   const maybe = await get(maybeExpectation);
   expectTypeOf(maybe.status).toEqualTypeOf<200 | 418>();
   expectTypeOf(maybe.body).toEqualTypeOf<string | undefined>();

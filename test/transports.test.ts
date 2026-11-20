@@ -93,6 +93,7 @@ describe.each(overHttp)("$name over HTTP", ({ create }) => {
       absent: undefined,
     };
     const encoded = "name+space=caf%C3%A9+%26%2B%7E%21&tag=one&tag=two&empty=";
+
     const { body } = await echo.form({ query: fields, body: fields });
 
     expect(body).toMatchObject({
@@ -102,6 +103,7 @@ describe.each(overHttp)("$name over HTTP", ({ create }) => {
         "content-type": expect.stringMatching(/^application\/x-www-form-urlencoded/),
       },
     });
+
     await expect(echo.form({ body: "already=encoded+input" })).resolves.toMatchObject({
       body: { body: "already=encoded+input" },
     });
@@ -141,6 +143,7 @@ describe.each(overHttp)("$name over HTTP", ({ create }) => {
               ["tag", "雪"],
               ["file", file],
             ] as const);
+
       const { body } = await echo.multipart({ body: input });
       const form = await echoedForm(body);
       const received = form.get("file");
@@ -158,6 +161,7 @@ describe.each(overHttp)("$name over HTTP", ({ create }) => {
       body: "x",
       headers: { "X-MiXeD": "1", "x-a": "first", "X-A": "last", "Content-Type": "text/csv" },
     });
+
     const pairs: string[] = [];
     for (let i = 0; i < body.rawHeaders.length; i += 2) {
       pairs.push(`${body.rawHeaders[i]}: ${body.rawHeaders[i + 1]}`);
@@ -172,6 +176,7 @@ describe.each(overHttp)("$name over HTTP", ({ create }) => {
   testHttp("use the encoder's boundary for multipart headers", async ({ echo }) => {
     const body = { tag: "one" };
     const headers = { "content-type": "multipart/form-data; boundary=caller" };
+
     const supplied = await echo.multipart({ body, headers });
     const bare = await echo.multipart({ body, headers: { "content-type": "multipart/form-data" } });
     const spelled = await echo.multipart({
@@ -218,22 +223,24 @@ describe.each(overHttp)("$name over HTTP", ({ create }) => {
     },
   );
 
-  testHttp.for(["/multipart-mixed", "/form"])("reject %s as a multipart response", async (path, { transport }) => {
-    const get = c.bind(
-      c.endpoint(path, { responses: { 200: c.multipart() } }),
-      transport,
-    );
+  testHttp.for(["/multipart-mixed", "/form"])(
+    "reject %s as a multipart response",
+    async (path, { transport }) => {
+      const get = c.bind(c.endpoint(path, { responses: { 200: c.multipart() } }), transport);
 
-    await expect(get()).rejects.toMatchObject({
-      code: "response",
-      schema: undefined,
-      status: 200,
-    });
-  });
+      await expect(get()).rejects.toMatchObject({
+        code: "response",
+        schema: undefined,
+        status: 200,
+      });
+    },
+  );
 
   testHttp("preserve every response byte", async ({ transport }) => {
     const get = c.bind(c.endpoint("/bytes", { responses: { 200: c.binary() } }), transport);
+
     const { body } = await get();
+
     expect([...body]).toEqual([0xe0, 0xa0, 0xff]);
     expect(body.buffer).toBeInstanceOf(ArrayBuffer);
   });
@@ -272,11 +279,13 @@ describe.each(overHttp)("$name over HTTP", ({ create }) => {
 });
 
 describe("Fetch", () => {
-  testWithServer("send a blob body with its type as the default Content-Type", async ({
-    baseUrl,
-  }) => {
+  testWithServer("send a blob body with its type as the default Content-Type", async ({ baseUrl }) => {
     const upload = c.bind(
-      c.endpoint("/echo", { method: "POST", body: c.kind("blob"), responses: { 200: c.json<Echo>() } }),
+      c.endpoint("/echo", {
+        method: "POST",
+        body: c.kind("blob"),
+        responses: { 200: c.json<Echo>() },
+      }),
       fetchTransport({ baseUrl }),
     );
     const body = new Blob(["café"], { type: "text/x-note" });
@@ -291,11 +300,13 @@ describe("Fetch", () => {
     expect(suppressed.body.headers["content-type"]).toBeUndefined();
   });
 
-  testWithServer("send a stream body without a default Content-Type", async ({
-    baseUrl,
-  }) => {
+  testWithServer("send a stream body without a default Content-Type", async ({ baseUrl }) => {
     const upload = c.bind(
-      c.endpoint("/echo", { method: "POST", body: c.kind("stream"), responses: { 200: c.json<Echo>() } }),
+      c.endpoint("/echo", {
+        method: "POST",
+        body: c.kind("stream"),
+        responses: { 200: c.json<Echo>() },
+      }),
       fetchTransport({ baseUrl }),
     );
     const encoder = new TextEncoder();
@@ -375,13 +386,17 @@ describe("Fetch", () => {
 
     const reason = new Error("stop");
     const controller = new AbortController();
+
     const aborted = get({ timeout: 60_000, transport: { signal: controller.signal } });
     controller.abort(reason);
+
     await expect(aborted).rejects.toMatchObject({ code: "transport", cause: reason });
 
     const plain = new AbortController();
+
     const abortedPlainly = get({ timeout: 60_000, transport: { signal: plain.signal } });
     plain.abort();
+
     await expect(abortedPlainly).rejects.toMatchObject({
       code: "transport",
       cause: { name: "AbortError" },
@@ -391,17 +406,25 @@ describe("Fetch", () => {
   test.each([200, 503])("drain a discarded Fetch body on status %i", async (status) => {
     const cancel = vi.fn();
     let chunks = 0;
-    const get = c.bind(c.endpoint("/users", { responses: { 200: c.json() } }), fetchTransport({
-      fetch: async () => new Response(new ReadableStream<Uint8Array>({
-        pull(controller) {
-          if (++chunks === 3) controller.close();
-          else controller.enqueue(Uint8Array.of(0xff));
-        },
-        cancel,
-      }), { status }),
-    }));
+    const get = c.bind(
+      c.endpoint("/users", { responses: { 200: c.json() } }),
+      fetchTransport({
+        fetch: async () =>
+          new Response(
+            new ReadableStream<Uint8Array>({
+              pull(controller) {
+                if (++chunks === 3) controller.close();
+                else controller.enqueue(Uint8Array.of(0xff));
+              },
+              cancel,
+            }),
+            { status },
+          ),
+      }),
+    );
 
     const result = get({ discard: true });
+
     if (status === 200) await expect(result).resolves.toMatchObject({ status, body: undefined });
     else await expect(result).rejects.toMatchObject({ code: "status", status, body: undefined });
     expect(chunks).toBe(3);
@@ -410,16 +433,23 @@ describe("Fetch", () => {
 
   test("explicit discard cancels an open error stream and preserves the request URL", async () => {
     const cancel = vi.fn();
-    const get = c.bind(c.endpoint("/users/{id}", { responses: { 200: c.json() } }), fetchTransport({
-      baseUrl: "https://api.test",
-      fetch: async () => new Response(new ReadableStream({ cancel }), {
-        status: 503,
-        headers: { "content-type": "text/event-stream" },
+    const get = c.bind(
+      c.endpoint("/users/{id}", { responses: { 200: c.json() } }),
+      fetchTransport({
+        baseUrl: "https://api.test",
+        fetch: async () =>
+          new Response(new ReadableStream({ cancel }), {
+            status: 503,
+            headers: { "content-type": "text/event-stream" },
+          }),
       }),
-    }));
+    );
 
     await expect(get({ path: { id: 42 }, discard: true })).rejects.toMatchObject({
-      code: "status", status: 503, url: "https://api.test/users/42", body: undefined,
+      code: "status",
+      status: 503,
+      url: "https://api.test/users/42",
+      body: undefined,
     });
     expect(cancel).toHaveBeenCalledTimes(1);
   });
@@ -428,16 +458,22 @@ describe("Fetch", () => {
     const get = c.bind(
       c.endpoint("/users", { responses: { 200: c.json() } }),
       fetchTransport({
-        fetch: async (_url, init) => new Response(new ReadableStream({
-          start(controller) {
-            const signal = init!.signal!;
-            signal.addEventListener("abort", () => controller.error(signal.reason), { once: true });
-          },
-        })),
+        fetch: async (_url, init) =>
+          new Response(
+            new ReadableStream({
+              start(controller) {
+                const signal = init!.signal!;
+                signal.addEventListener("abort", () => controller.error(signal.reason), { once: true });
+              },
+            }),
+          ),
       }),
     );
+
     await expect(get({ timeout: 5 })).rejects.toMatchObject({
-      code: "timeout", status: 200, cause: { name: "TimeoutError" },
+      code: "timeout",
+      status: 200,
+      cause: { name: "TimeoutError" },
     });
   });
 
@@ -609,6 +645,7 @@ describe("Fetch", () => {
     );
 
     const result = get();
+
     await expect(result).rejects.toMatchObject({
       code: "response",
       schema: "body",
@@ -628,6 +665,7 @@ describe("Playwright", () => {
   testWithServer("return timing and the server address as metadata", async ({ baseUrl }) => {
     const context = await request.newContext();
     onTestFinished(() => context.dispose());
+
     const get = c.bind(
       c.endpoint("/empty", { responses: { 204: c.none() } }),
       playwrightTransport({ context, baseUrl }),
@@ -643,11 +681,10 @@ describe("Playwright", () => {
     expect(transport?.timing.startTime).toBeGreaterThan(0);
   });
 
-  testWithServer("resolve relative templates under the path of use.baseURL", async ({
-    baseUrl,
-  }) => {
+  testWithServer("resolve relative templates under the path of use.baseURL", async ({ baseUrl }) => {
     const context = await request.newContext({ baseURL: `${baseUrl}/` });
     onTestFinished(() => context.dispose());
+
     const baseURL: string | undefined = undefined;
     const api = c.bind(
       {
@@ -667,6 +704,7 @@ describe("Playwright", () => {
   testWithServer("decode multipart tokens and padded delimiters", async ({ baseUrl }) => {
     const context = await request.newContext();
     onTestFinished(() => context.dispose());
+
     const get = c.bind(
       c.endpoint("/multipart-tokens", { responses: { 200: c.multipart() } }),
       playwrightTransport({ context, baseUrl }),

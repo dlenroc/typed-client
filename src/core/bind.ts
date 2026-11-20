@@ -237,9 +237,8 @@ async function call(
     headers = rawParts(headers as never)[0];
   }
 
-  const rawBody = isRaw(body);
-
   // A raw string for a JSON body is the JSON text.
+  const rawBody = isRaw(body);
   let rawJsonText = false;
   if (rawBody) {
     const [rawValue, rawKind] = rawParts(body as never);
@@ -450,16 +449,20 @@ async function call(
   } catch (failure) {
     const cause = failureCause(failure);
     if (isTimeoutError(cause)) {
-      throw preserveCleanupError(new ClientError({
-        code: "timeout",
-        summary: "Timed out reading response",
-        method,
-        url: responseUrl,
-        meta,
-        status,
-        cause,
-      }), failure);
+      throw preserveCleanupError(
+        new ClientError({
+          code: "timeout",
+          summary: "Timed out reading response",
+          method,
+          url: responseUrl,
+          meta,
+          status,
+          cause,
+        }),
+        failure,
+      );
     }
+
     const cleanupFailed = cause instanceof ResponseCleanupError;
     const released = kind === "none" || cleanupFailed;
     throw preserveCleanupError(
@@ -536,6 +539,7 @@ export function bind<const Contract extends object, Adapter extends AnyTransport
     const entries = node as Record<string, unknown>;
     const keys = Object.keys(entries);
     const group: Record<string, unknown> = {};
+
     for (let i = 0; i < keys.length; i++) {
       const key = keys[i]!;
       group[key] = visit(entries[key]);

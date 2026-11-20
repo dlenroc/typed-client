@@ -117,6 +117,7 @@ describe("response schemas", () => {
 
   test("each status gives its own body and headers output", async () => {
     const result = await get({ path: { id: 1 } });
+
     if (result.status === 200) {
       expectTypeOf(result.body).toEqualTypeOf<{ at: Date }>();
       expectTypeOf(result.headers).toEqualTypeOf<{ total: number }>();
@@ -149,11 +150,14 @@ test("a handwritten Standard Schema infers the validator's success value", async
       version: 1 as const,
       vendor: "test",
       async validate(value: unknown) {
-        return typeof value === "string" ? { value: value.length } : { issues: [{ message: "Expected text" }] };
+        return typeof value === "string"
+          ? { value: value.length }
+          : { issues: [{ message: "Expected text" }] };
       },
     },
   };
   const get = c.bind(c.endpoint("/", { responses: { 200: c.text(schema) } }), fetchTransport());
+
   expectTypeOf((await get()).body).toEqualTypeOf<number>();
 });
 
@@ -171,6 +175,7 @@ test("infer recursive JSON request and response types", async () => {
     }),
     fetchTransport(),
   );
+
   const result = await save({ body: { name: "Root", children: [] } });
 
   expectTypeOf<InferInput<typeof save>["body"]>().toEqualTypeOf<Category>();
@@ -184,6 +189,7 @@ test("check built-in schema kinds at declaration and native kinds at bind", asyn
     // @ts-expect-error text request schemas must produce strings
     body: c.text(c.type<number>()),
   });
+
   const invalid = c.endpoint("/download", {
     responses: { 200: c.kind("blob", c.type<string>()) },
   });
@@ -214,6 +220,7 @@ test("binary responses are ArrayBuffer-backed bytes for web APIs", async () => {
     fetchTransport(),
   );
   const result = await download();
+
   if (result.status === 200) {
     expectTypeOf(result.body).toEqualTypeOf<Uint8Array<ArrayBuffer>>();
     void new Blob([result.body]);
@@ -225,5 +232,6 @@ test("binary responses are ArrayBuffer-backed bytes for web APIs", async () => {
 
 test("untyped JSON responses infer JsonValue", async () => {
   const list = c.bind(c.endpoint("/users", { responses: { 200: c.json() } }), fetchTransport());
+
   expectTypeOf((await list()).body).toEqualTypeOf<JsonValue>();
 });

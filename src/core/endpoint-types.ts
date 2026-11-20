@@ -34,7 +34,10 @@ export type SchemaOutput<Schema> =
     : Schema extends StandardSchemaV1<any, any>
       ? "types" extends keyof Schema["~standard"]
         ? NonNullable<Schema["~standard"]["types"]>["output"]
-        : Extract<Awaited<ReturnType<Schema["~standard"]["validate"]>>, { readonly value: unknown }>["value"]
+        : Extract<
+            Awaited<ReturnType<Schema["~standard"]["validate"]>>,
+            { readonly value: unknown }
+          >["value"]
       : never;
 
 export type PathScalar = string | number | boolean | bigint;
@@ -50,6 +53,7 @@ type NullChecks = undefined extends string ? false : true;
  */
 export type AcceptsUndefined<Value> =
   NullChecks extends true ? (undefined extends Value ? true : false) : false;
+
 export type IsAny<Value> = 0 extends 1 & Value ? true : false;
 
 type AllTrue<Results> = Exclude<Results, true> extends never ? true : false;
@@ -390,11 +394,10 @@ type RejectOptional<Declaration, Fields extends PropertyKey> = {
     : never]?: never;
 };
 
-type ValidResponseDescriptor<Declaration> = (Declaration extends {
-  readonly body: infer Body extends BodyDeclaration;
-}
-  ? { readonly body: WithCheck<Body, ResponseBodyCheck<Body>> }
-  : unknown) &
+type ValidResponseDescriptor<Declaration> =
+  (Declaration extends { readonly body: infer Body extends BodyDeclaration }
+    ? { readonly body: WithCheck<Body, ResponseBodyCheck<Body>> }
+    : unknown) &
   (Declaration extends { readonly headers: infer Headers extends SchemaLike }
     ? { readonly headers: WithCheck<Headers, ResponseHeaderCheck<Headers>> }
     : unknown);
@@ -402,7 +405,9 @@ type ValidResponseDescriptor<Declaration> = (Declaration extends {
 type ValidResponse<Declaration> =
   Declaration extends BodyDeclaration
     ? WithCheck<Declaration, ResponseBodyCheck<Declaration>>
-    : ResponseDescriptor & ValidResponseDescriptor<Declaration> & RejectOptional<Declaration, "headers" | "body">;
+    : ResponseDescriptor &
+      ValidResponseDescriptor<Declaration> &
+      RejectOptional<Declaration, "headers" | "body">;
 
 type MissingPathNames<Url extends string, Output> = Exclude<
   PathNames<Url>,

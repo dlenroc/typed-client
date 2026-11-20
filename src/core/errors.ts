@@ -244,6 +244,7 @@ class ClientErrorInstance extends Error {
         fields.code === "status" ? (fields.body as string | undefined) : undefined,
       ),
     );
+
     this.code = fields.code;
     this.method = fields.method;
     this.url = fields.url;
@@ -325,12 +326,14 @@ export function transportError(
   const adapter = failure instanceof AdapterFailure ? failure : undefined;
   const original = adapter ? adapter.cause : failure;
   const cause = failureCause(original);
+
   let code: ClientError["code"] = adapter?.stage ?? "transport";
   let summary = adapter?.message ?? "Cannot get response";
   if (code === "transport" && isTimeoutError(cause)) {
     code = "timeout";
     summary = "Timed out waiting for response";
   }
+
   return preserveCleanupError(
     new ClientError({
       code,

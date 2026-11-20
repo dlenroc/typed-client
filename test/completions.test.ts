@@ -8,20 +8,26 @@ import { expect, test } from "vitest";
 async function completions(file: string): Promise<Record<string, string[]>> {
   const text = readFileSync(file, "utf8");
   const tsc = fileURLToPath(new URL("../node_modules/.bin/tsc", import.meta.url));
-  const server = spawn(tsc, ["--lsp", "--stdio"], { cwd: fileURLToPath(new URL(".", import.meta.url)) });
+  const server = spawn(tsc, ["--lsp", "--stdio"], {
+    cwd: fileURLToPath(new URL(".", import.meta.url)),
+  });
   const pending = new Map<number, (result: unknown) => void>();
   let buffer = Buffer.alloc(0);
   let id = 0;
 
   server.stdout.on("data", (chunk: Buffer) => {
     buffer = Buffer.concat([buffer, chunk]);
+
     for (;;) {
       const end = buffer.indexOf("\r\n\r\n");
       if (end < 0) return;
+
       const length = Number(/Content-Length: (\d+)/i.exec(buffer.subarray(0, end).toString())![1]);
       if (buffer.length < end + 4 + length) return;
+
       const message = JSON.parse(buffer.subarray(end + 4, end + 4 + length).toString());
       buffer = buffer.subarray(end + 4 + length);
+
       if (message.method !== undefined && message.id !== undefined) {
         send({ jsonrpc: "2.0", id: message.id, result: null });
       } else if (message.id !== undefined) {
@@ -44,7 +50,11 @@ async function completions(file: string): Promise<Record<string, string[]>> {
 
   try {
     const uri = pathToFileURL(file).href;
-    await request("initialize", { processId: process.pid, rootUri: pathToFileURL(file).href, capabilities: {} });
+    await request("initialize", {
+      processId: process.pid,
+      rootUri: pathToFileURL(file).href,
+      capabilities: {},
+    });
     send({ jsonrpc: "2.0", method: "initialized", params: {} });
     send({
       jsonrpc: "2.0",
@@ -77,6 +87,7 @@ test("the editor completes only the keys that a call or a declaration takes", { 
   expect(labels.callPartial).toEqual(call);
   expect(labels.callLater).toEqual(call.filter((key) => key !== "path"));
   expect(labels.unionBranch).toEqual(call.filter((key) => key !== "path"));
+
   expect(labels.status).toContain("200");
   expect(labels.path).toEqual(["id"]);
   expect(labels.query).toEqual(["page"]);
@@ -84,6 +95,7 @@ test("the editor completes only the keys that a call or a declaration takes", { 
   expect(labels.body).toEqual(["name", "tags"]);
   expect(labels.storedRawBody).toEqual(["name", "tags"]);
   expect(labels.selectedBody).toEqual(["id"]);
+
   expect(labels.fetchOptions).toEqual([
     "cache", "credentials", "integrity", "keepalive", "mode", "priority", "redirect",
     "referrer", "referrerPolicy", "signal", "window",
@@ -94,6 +106,7 @@ test("the editor completes only the keys that a call or a declaration takes", { 
   ]);
   expect(labels.fetchRawKind).toEqual(["binary", "blob", "json", "multipart", "stream", "text", "urlencoded"]);
   expect(labels.playwrightRawKind).toEqual(["binary", "json", "multipart", "text", "urlencoded"]);
+
   expect(labels.definition).toEqual(["body", "headers", "meta", "method", "path", "query", "responses"]);
   expect(labels.response).toEqual(["body", "headers"]);
   expect(labels.responseLater).toEqual(["headers"]);

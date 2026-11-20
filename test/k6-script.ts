@@ -44,6 +44,7 @@ async function jsonRequests() {
       },
     }),
   );
+
   const json = await post({ body: { name: "café" } });
 
   check(json, {
@@ -77,13 +78,16 @@ async function formRequests() {
   );
   const fields = { "name space": "café &+~!", tag: ["one", "two"], blank: null, broken: "\ud800" };
   const encoded = "name+space=caf%C3%A9+%26%2B%7E%21&tag=one&tag=two&blank=&broken=%EF%BF%BD";
+
   const result = await form({ query: fields, body: fields });
 
   check(result.body, {
     "form fields preserve escaping and repetition": (value) => value.body === encoded,
     "query fields use the same encoding": (value) => value.url === `/v1/echo?${encoded}`,
   });
+
   const read = c.bind(c.endpoint("/form", { responses: { 200: c.urlencoded() } }), adapter);
+
   check((await read()).body, {
     "malformed form bytes preserve adjacent Unicode": (body) =>
       body.mixed === "雪\ufffd" && body.bom === "\ufeff\ufffd",
@@ -169,16 +173,21 @@ async function multipartRequests() {
       ["a-file", file],
       [repeated ? "z-first" : "m-last", "雪"],
     ] as const;
+
     const result = await upload({ body: parts });
     const wireParts = Array.from(
-      result.body.body.matchAll(/Content-Disposition: form-data; name="([^"]+)"[^\r]*\r\n(?:Content-Type:[^\r]*\r\n)?\r\n([^\r]*)\r\n/gi),
+      result.body.body.matchAll(
+        /Content-Disposition: form-data; name="([^"]+)"[^\r]*\r\n(?:Content-Type:[^\r]*\r\n)?\r\n([^\r]*)\r\n/gi,
+      ),
       ([, name, value]) => [name, value],
     );
 
     check(wireParts, {
       [`ordered multipart pairs preserve names and bytes (repeated: ${repeated})`]: (actual) =>
         JSON.stringify(actual) === JSON.stringify([
-          ["z-first", "café"], ["a-file", "AB"], [repeated ? "z-first" : "m-last", "雪"],
+          ["z-first", "café"],
+          ["a-file", "AB"],
+          [repeated ? "z-first" : "m-last", "雪"],
         ]),
     });
   }
@@ -214,6 +223,7 @@ async function multipartRequests() {
     body: pairs,
     headers: c.raw({ "content-type": "multipart/form-data; boundary=caller" }),
   });
+
   check(malformed.body.headers, {
     "raw headers keep the supplied multipart Content-Type": (headers) =>
       headers["content-type"] === "multipart/form-data; boundary=caller",
@@ -243,6 +253,7 @@ async function responseDecoding() {
     c.endpoint("/multipart-tokens", { responses: { 200: c.multipart() } }),
     adapter,
   );
+
   check((await multipart()).body, {
     "multipart decodes tokens and padded delimiters": ({ note, file }) =>
       note === "one" &&
@@ -254,11 +265,13 @@ async function responseDecoding() {
 
   const refused = c.bind(c.endpoint("http://127.0.0.1:1/", { responses: {} }), adapter);
   const slow = c.bind(c.endpoint("/slow", { responses: { 200: c.json() } }), adapter);
+
   for (const [name, call, code] of [
     ["a refused connection", () => refused({ status: 200 }), "transport"],
     ["a timeout", () => slow({ timeout: 50 }), "timeout"],
   ] as const) {
     const error = await call().then(() => undefined, (cause: unknown) => cause);
+
     check(error, {
       [`${name} is a ${code} error`]: (value) =>
         value instanceof ClientError && value.code === code,
@@ -275,6 +288,7 @@ async function responseDecoding() {
   ] as const) {
     const bad = c.bind(c.endpoint("/bad", { responses: { 204: c.kind(kind) } }), adapter);
     const error = await bad().then(() => undefined, (cause: unknown) => cause);
+
     check(error, {
       [`a status error has the ${name} body`]: (value) =>
         value instanceof ClientError && value.code === "status" && value.body === body,
@@ -282,6 +296,7 @@ async function responseDecoding() {
   }
 
   const empty = c.bind(c.endpoint("/empty", { responses: { 204: c.none() } }), adapter);
+
   check(await empty(), {
     "metadata has the remote port and empty TLS data over HTTP": (value) =>
       value.transport?.remote_port === Number(/:(\d+)/.exec(__ENV.BASE_URL!)?.[1]) &&

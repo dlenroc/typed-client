@@ -126,7 +126,6 @@ function manualMultipart() {
 
     const mediaType =
       (isK6File(value) ? value.content_type : value.mediaType) ?? defaultFileMediaType;
-
     const filename = escapeQuoted(value.filename ?? defaultFilename);
 
     add(
@@ -178,6 +177,7 @@ function k6Multipart(
 ): { body: Record<string, unknown> | string | ArrayBuffer; contentType?: string } {
   const nativeParts: Record<string, K6Part> = Object.create(null);
   const fieldNames: string[] = [];
+
   // k6 turns a multipart object into an unordered Go map.
   let manualEncoder = forceManual || Array.isArray(body) ? manualMultipart() : undefined;
   let containsFile = false;
@@ -246,6 +246,7 @@ class K6ResponseHandle implements TransportResponse<ResponseKindMap, K6ResponseM
   readonly url: string;
   readonly headers: ResponseHeaders;
   readonly transport: K6ResponseMetadata;
+
   private consumed = false;
 
   constructor(private readonly native: K6Response) {
@@ -266,7 +267,6 @@ class K6ResponseHandle implements TransportResponse<ResponseKindMap, K6ResponseM
 
     // The native `timings` object retains the response body.
     const timings = native.timings;
-
     this.transport = {
       timings: {
         blocked: timings.blocked,
@@ -347,11 +347,13 @@ function captureMode(endpoint: Endpoint, status: number | readonly number[] | un
 
   const statuses = status ?? Object.keys(endpoint.responses);
   let mode: CaptureMode = "none";
+
   for (const accepted of statuses) {
     const candidate = captureKind(endpoint, accepted);
     if (candidate === "binary") return candidate;
     if (candidate === "text") mode = candidate;
   }
+
   return mode;
 }
 
@@ -415,7 +417,6 @@ export function k6Transport(
       const contentTypeSuppressed = selected?.contentTypeSuppressed === true;
 
       let body: RequestBody | null = null;
-
       if (request.body !== undefined) {
         switch (request.bodyKind) {
           case "none":

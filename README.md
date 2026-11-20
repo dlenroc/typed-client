@@ -105,25 +105,25 @@ take a type argument. `c.kind(name, schema?)` declares a kind of the bound
 transport, for example `c.kind("blob")`.
 
 Fetch also sends `c.kind("blob")` and `c.kind("stream")` bodies and decodes
-them as responses. A `blob` body is a `Blob` or `File`. Fetch uses its `type`, if not
-empty, as the default `Content-Type`. A `stream` body is a `ReadableStream` of
-bytes. Chromium requires HTTP/2 or later for a streamed upload. Fetch reads
-the stream once while it sends the body. With
-`follow: true`, a redirect other than 303 fails for a `stream` body. Consume or
-cancel a returned stream when you finish with it.
+them as responses. A `blob` body is a `Blob` or `File`. Fetch uses its
+`type`, if not empty, as the default `Content-Type`.
+
+A `stream` body is a `ReadableStream` of bytes. Chromium requires HTTP/2 or
+later for a streamed upload. Fetch reads the stream once while it sends the
+body. With `follow: true`, a redirect other than 303 fails for a `stream`
+body. Consume or cancel a returned stream when you finish with it.
 
 Without a body, the client sends no default `Content-Type`. The client sends
-JSON `null` as a value. If JSON serialization
-fails, the call throws a `request` error. Do not send a body with Fetch `GET`
-or `HEAD`.
+JSON `null` as a value. If JSON serialization fails, the call throws a
+`request` error. Do not send a body with Fetch `GET` or `HEAD`.
 
 ### Fields, headers and files
 
 Query, URL-encoded, and multipart fields accept records or arrays of
 `[name, value]` pairs. Repeat a name in the pairs or use an array as a record
-value. `null` sends an empty value. A query or
-URL-encoded body also accepts an encoded string. A value with an interface type has no
-index signature, so declare that part with its type, for example
+value. `null` sends an empty value. A query or URL-encoded body also accepts
+an encoded string. A value with an interface type has no index signature, so
+declare that part with its type, for example
 `query: c.type<Filter>()`.
 
 ```ts
@@ -213,6 +213,7 @@ For generated clients, export the endpoint declarations from a shared package
 and bind them in each runtime. A flat registry can use
 `satisfies Record<string, Endpoint>` to check its entries and preserve their
 literal paths and statuses.
+
 Use the bound function when you also need native transport options, response
 metadata, or the wire type of a transport-specific body kind. Inputs exclude
 raw overrides. Responses default to the union of declared statuses.
@@ -274,9 +275,11 @@ browser, Fetch reports an unfollowed redirect as status 0.
 
 `transport` accepts the native request options, except the method, headers,
 and body, which the client sets. A native redirect option overrides `follow`.
+
 Fetch drains discarded bodies chunk by chunk to allow connection reuse. It cancels
 `text/event-stream` bodies on discard because they can stay open indefinitely.
 Use `timeout` or a signal to bound other slow responses.
+
 On k6, a native `timeout` overrides `timeout`. On Fetch, the client combines a
 native `signal` with `timeout`. Use a positive number for a portable deadline.
 Zero disables the Playwright timeout and can expire immediately on Fetch and k6.
@@ -351,8 +354,8 @@ try {
 | Code        | When it occurs                                                                 | Fields                                          |
 | ----------- | ------------------------------------------------------------------------------ | ----------------------------------------------- |
 | `request`   | Nothing was sent because the call input, URL, preparation, or a schema failed. | `schema`, `issues`                              |
-| `transport` | The transport failed to deliver or release the response.                      | `status` if any                                 |
-| `timeout`   | Sending or reading the response timed out.                                    | `status` if received                            |
+| `transport` | The transport failed to deliver or release the response.                       | `status` if any                                 |
+| `timeout`   | Sending or reading the response timed out.                                     | `status` if received                            |
 | `status`    | The status falls outside the accepted set.                                     | `status`, `headers`, `body`                     |
 | `response`  | The body cannot be decoded, or a response schema rejects the response.         | `status`, `schema`, `issues`, `headers`, `body` |
 
@@ -368,6 +371,7 @@ or if the body cannot be read. Fetch buffers the full diagnostic text for
 assertions. Use `discard: true` to skip capture or `timeout` to limit the
 wait for a slow or open response. k6 captures bodies according to the accepted
 response declarations and skips capture with `discard: true`.
+
 For a `response` error, `body` is the decoded value that the body schema
 rejected. It is `undefined` if the body could not be decoded or the headers
 schema failed. Other errors have no `headers` and no `body`.
@@ -426,12 +430,7 @@ import { c } from "@dlenroc/typed-client";
 import { k6Transport } from "@dlenroc/typed-client/k6";
 import { getUser } from "./users.js";
 
-const loadGet = c.bind(
-  getUser,
-  k6Transport({
-    baseUrl: "https://api.example.test/v1",
-  }),
-);
+const loadGet = c.bind(getUser, k6Transport({ baseUrl: "https://api.example.test/v1" }));
 
 export default async function () {
   await loadGet({ path: { id: 42 }, status: 200 });

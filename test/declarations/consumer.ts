@@ -6,9 +6,11 @@ import { playwrightTransport } from "@dlenroc/typed-client/playwright";
 import type { APIRequestContext } from "playwright-core";
 
 declare const context: APIRequestContext;
+
 export const contract = c.endpoint("/users/{id}", { responses: { 200: c.json<{ name: string }>() } });
 export type UserInput = InferInput<typeof contract>;
 export type User = InferResponse<typeof contract, 200>["body"];
+
 export const rawId = c.raw("a/b");
 export const get = c.bind(contract, fetchTransport());
 export const fromFetch = () => get({ path: { id: rawId } });

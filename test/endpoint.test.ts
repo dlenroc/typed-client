@@ -6,11 +6,17 @@ describe("c.endpoint", () => {
   test("the endpoint is frozen normalized data and meta stays the caller's object", () => {
     const meta = { operationId: "getUser" };
     const endpoint = c.endpoint("/users/{id}", { responses: { 200: c.json() }, meta });
+
     expect(endpoint).toEqual({
       method: "GET",
       template: "/users/{id}",
       params: ["id"],
-      request: { path: undefined, query: undefined, headers: undefined, body: { kind: "none", schema: undefined } },
+      request: {
+        path: undefined,
+        query: undefined,
+        headers: undefined,
+        body: { kind: "none", schema: undefined },
+      },
       responses: { 200: { headers: undefined, body: { kind: "json", schema: undefined } } },
       meta,
     });
@@ -30,6 +36,7 @@ describe("c.endpoint", () => {
       body,
       responses: { 201: body, 204: { headers }, 409: c.text() },
     });
+
     expect(endpoint.request.body).toBe(body);
     expect(endpoint.responses[201]!.body).toBe(body);
     expect(endpoint.responses[204]).toEqual({ headers, body: { kind: "none", schema: undefined } });
@@ -44,11 +51,18 @@ describe("c.endpoint", () => {
       method: "GET",
       template: "/users/{id}",
       params: ["id"],
-      request: { path: undefined, query: undefined, headers: undefined, body: { kind: "none", schema: undefined } },
+      request: {
+        path: undefined,
+        query: undefined,
+        headers: undefined,
+        body: { kind: "none", schema: undefined },
+      },
       responses: { 204: { headers: undefined, body: { kind: "none", schema: undefined } } },
       meta: {},
     } as const;
+
     await c.bind(plain, transport)({ path: { id: 7 } });
+
     expect(sent[0]!.url).toBe("https://api.test/v1/users/7");
   });
 

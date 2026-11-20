@@ -4,10 +4,7 @@ import { fileURLToPath } from "node:url";
 import { expect } from "vitest";
 import { testWithServer } from "./fixtures.ts";
 
-testWithServer("k6 sends and decodes requests over HTTP", { timeout: 30_000 }, async ({
-  baseUrl,
-  signal,
-}) => {
+testWithServer("k6 sends and decodes requests over HTTP", { timeout: 30_000 }, async ({ baseUrl, signal }) => {
   const script = fileURLToPath(new URL("./k6-script.ts", import.meta.url));
   const child = spawn(
     process.env.K6_BIN || "k6",
@@ -23,5 +20,6 @@ testWithServer("k6 sends and decodes requests over HTTP", { timeout: 30_000 }, a
   child.stderr.on("data", collect);
 
   const [code] = await once(child, "close");
+
   expect(code, output).toBe(0);
 });

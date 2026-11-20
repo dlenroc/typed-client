@@ -13,6 +13,7 @@ describe("calls", () => {
         schema((input) => {
           stages.push(name);
           expect(input).toBeDefined();
+
           const result = { value: output };
           return mode === "async" ? Promise.resolve(result) : result;
         });
@@ -77,6 +78,7 @@ describe("calls", () => {
     );
 
     await get();
+
     expect(validate).toHaveBeenCalledExactlyOnceWith(undefined);
     expect(adapter).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ url: "/index.php?/api/cases/42" }),
@@ -151,7 +153,6 @@ describe("calls", () => {
     expect(sent.options).toBe(input.transport);
     expect(sent.endpoint.meta).toBe(meta);
   });
-
 });
 
 describe("raw parts and call options", () => {
@@ -286,12 +287,14 @@ describe("URLs, decorators, and the transport request", () => {
       },
       transport,
     );
+
     await api.tenant({ path: { tenant: "" } });
     await api.other({ path: { id: 1 } });
     await api.cdn({ path: { file: "a" } });
     await api.tenant({ path: c.raw("/raw") });
     await api.tenant({ path: c.raw("//host/x") });
     await api.tenant({ path: c.raw("http://other.test/x") });
+
     expect(sent.map((item) => item.url)).toEqual([
       "https://api.test/v1//users",
       "https://other.test/users/1",
@@ -302,8 +305,15 @@ describe("URLs, decorators, and the transport request", () => {
     ]);
 
     const noBase: string[] = [];
-    const bare = fetchTransport({ fetch: async (url) => (noBase.push(String(url)), new Response(null, { status: 204 })) });
+    const bare = fetchTransport({
+      fetch: async (url) => {
+        noBase.push(String(url));
+        return new Response(null, { status: 204 });
+      },
+    });
+
     await c.bind(users, bare).get({ path: c.raw("//host/x") });
+
     expect(noBase).toEqual(["//host/x"]);
   });
 
@@ -311,12 +321,14 @@ describe("URLs, decorators, and the transport request", () => {
     const { sent, transport } = recorder();
     const ada = c.bind(users, withToken(transport, async () => "ada"));
     const path = { id: 1 };
+
     await ada.get({ path });
     await ada.get({ path, headers: { authorization: "Bearer wrong" } });
     await ada.get({ path, headers: { Authorization: "Bearer wrong" } });
     await ada.get({ path, headers: { authorization: null } });
     await ada.get({ path, headers: { Authorization: null } });
     await ada.get({ path, headers: { authorization: undefined, "x-a": 1 } });
+
     expect(sent.map((item) => item.headers)).toEqual([
       { authorization: "Bearer ada" },
       { authorization: "Bearer wrong" },
@@ -334,7 +346,15 @@ describe("URLs, decorators, and the transport request", () => {
       return { status: 204, url: request.url, headers: {}, read: async () => undefined as never };
     };
     const options = { trace: "t1" };
-    await c.bind(users, mock).get({ path: { id: 1 }, timeout: 50, follow: true, discard: true, transport: options });
+
+    await c.bind(users, mock).get({
+      path: { id: 1 },
+      timeout: 50,
+      follow: true,
+      discard: true,
+      transport: options,
+    });
+
     expect(seen[0]).toEqual({
       endpoint: users.get,
       method: "GET",
@@ -355,7 +375,11 @@ describe("URLs, decorators, and the transport request", () => {
   test("synchronous request schemas all run before the call yields", async () => {
     const seen: string[] = [];
     const pass = <Value>(part: string) =>
-      schema((value: unknown) => (seen.push(part), { value: value as Value }));
+      schema((value: unknown) => {
+        seen.push(part);
+        return { value: value as Value };
+      });
+
     const endpoint = c.endpoint("/users/{id}", {
       method: "POST",
       path: pass<{ id: number }>("path"),
@@ -365,20 +389,23 @@ describe("URLs, decorators, and the transport request", () => {
       responses: { 204: c.none() },
     });
     const { transport } = recorder();
+
     const pending = c.bind(endpoint, transport)({
       path: { id: 1 },
       query: {},
       headers: {},
       body: { name: "Ada" },
     });
+
     expect(seen).toEqual(["path", "query", "headers", "body"]);
     await pending;
   });
 
   test("a raw path parameter without a value is missing", async () => {
     const { transport } = recorder();
-    await expect(c.bind(users, transport).get({ path: { id: c.raw(undefined as never) } })).rejects.toMatchObject({
-      code: "request",
-    });
+
+    await expect(
+      c.bind(users, transport).get({ path: { id: c.raw(undefined as never) } }),
+    ).rejects.toMatchObject({ code: "request" });
   });
 });

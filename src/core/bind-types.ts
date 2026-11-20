@@ -65,13 +65,18 @@ interface CommonOptions {
 // A portable operation can call a bound transport without native options.
 // The optional mark distinguishes this view from an explicitly supplied adapter.
 declare const portable: unique symbol;
+
 type PortableTransport = (
   | Transport<any, {}, {}, object>
   | Transport<any, {}, {}>
 ) & { readonly [portable]?: never };
 
 type IsPortable<Adapter> =
-  IsAny<Adapter> extends true ? false : typeof portable extends keyof Adapter ? true : false;
+  IsAny<Adapter> extends true
+    ? false
+    : typeof portable extends keyof Adapter
+      ? true
+      : false;
 
 type PortableRequests = Omit<RequestKindMap, "multipart"> & {
   readonly multipart: Exclude<RequestKindMap["multipart"], NativeFormData>;
@@ -125,8 +130,7 @@ type KeysOfPath<Spec extends Endpoint> = Spec["params"][number];
 
 // `Mode` is true for a call. It is false for `InferInput`, which has no raw
 // values.
-type RawOf<Mode, Value> =
-  Mode extends true ? Raw<readonly [Value, undefined]> : never;
+type RawOf<Mode, Value> = Mode extends true ? Raw<readonly [Value, undefined]> : never;
 
 type PathProperty<Spec extends Endpoint, Mode> =
   [Defined<Spec["request"]["path"]>] extends [never]
@@ -166,7 +170,9 @@ type RawBodyPairs<Kind extends string, Adapter extends AnyTransport> =
 type RawBody<Body extends NormalizedBody, Adapter extends AnyTransport, Mode> =
   IsPortable<Adapter> extends true
     ? never
-    : Mode extends true ? Raw<RawBodyPairs<Body["kind"], Adapter>> : never;
+    : Mode extends true
+      ? Raw<RawBodyPairs<Body["kind"], Adapter>>
+      : never;
 
 type TransportBody<Kind extends string, Adapter extends AnyTransport> =
   CommonInput<
@@ -292,8 +298,7 @@ declare const absent: unique symbol;
 // An option that the call leaves out or may leave out.
 type Absent = { readonly [absent]: true };
 
-type MayOmit<Value> =
-  Absent extends Value ? true : AcceptsUndefined<Value>;
+type MayOmit<Value> = Absent extends Value ? true : AcceptsUndefined<Value>;
 
 // An omitted key in any union member contributes the default behavior.
 type OptionValue<Options, Key extends keyof CoreOptions> =
@@ -313,8 +318,6 @@ type CallFields<
 > = CallOptions<Spec, Adapter> &
   RequestFor<Spec, Adapter, Mode> &
   ValidOptions<Spec, Input>;
-
-
 
 type StatusNumber<Status> =
   Status extends number
@@ -480,7 +483,9 @@ type InputArgs<Spec extends Endpoint, Adapter extends AnyTransport, Value> =
 // separately so that unknown cannot hide an unsupported transport kind.
 type CheckRawBody<Input, Allowed> =
   Input extends { readonly body?: infer Body }
-    ? [Extract<Body, Raw>] extends [Allowed] ? unknown : { readonly body?: Allowed }
+    ? [Extract<Body, Raw>] extends [Allowed]
+      ? unknown
+      : { readonly body?: Allowed }
     : unknown;
 
 // Explicit type arguments must agree with the actual status and discard.
@@ -496,17 +501,21 @@ type CheckedArgument<Spec extends Endpoint, Adapter extends AnyTransport, Input>
 // results by declared status: a wider body at one status must not hide in
 // the union of bodies returned at other statuses.
 type SupportsPortableCall<Spec extends Endpoint, Adapter extends AnyTransport> =
-  IsAny<Adapter> extends true ? boolean
-    : IsPortable<Adapter> extends true ? true
-    : {} extends NativeOptions<Adapter>
-      ? [
-          RequestFor<Spec, PortableTransport, false>,
-          ResponseFor<Spec, Adapter, DeclaredStatuses<Spec>>,
-        ] extends [
-          RequestFor<Spec, Adapter, false>,
-          ResponseFor<Spec, PortableTransport, DeclaredStatuses<Spec>>,
-        ] ? true : boolean
-      : boolean;
+  IsAny<Adapter> extends true
+    ? boolean
+    : IsPortable<Adapter> extends true
+      ? true
+      : {} extends NativeOptions<Adapter>
+        ? [
+            RequestFor<Spec, PortableTransport, false>,
+            ResponseFor<Spec, Adapter, DeclaredStatuses<Spec>>,
+          ] extends [
+            RequestFor<Spec, Adapter, false>,
+            ResponseFor<Spec, PortableTransport, DeclaredStatuses<Spec>>,
+          ]
+          ? true
+          : boolean
+        : boolean;
 
 /**
  * A bound endpoint. Use `Operation<typeof endpoint>` for a helper that
@@ -567,10 +576,10 @@ type InvalidResponseSchema<Schema, Wire> =
   [Schema] extends [undefined]
     ? never
     : Schema extends SchemaLike
-    ? [ResponseSchemaCheck<Schema, Wire>] extends [never]
-      ? Schema
-      : never
-    : never;
+      ? [ResponseSchemaCheck<Schema, Wire>] extends [never]
+        ? Schema
+        : never
+      : never;
 
 type InvalidResponse<Response, Adapter extends AnyTransport> =
   Response extends NormalizedResponse

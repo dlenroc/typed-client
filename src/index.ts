@@ -14,11 +14,7 @@ import { raw } from "./core/raw.js";
 
 export { ClientError } from "./core/errors.js";
 export type { Raw } from "./core/raw.js";
-export type {
-  InferInput,
-  InferResponse,
-  Operation,
-} from "./core/bind-types.js";
+export type { InferInput, InferResponse, Operation } from "./core/bind-types.js";
 export type { BodyDeclaration, Endpoint, TypeHint } from "./core/endpoint-types.js";
 export type {
   JsonValue,

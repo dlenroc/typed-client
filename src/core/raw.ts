@@ -56,7 +56,6 @@ export function rawParts(value: Raw): RawPair {
  * permitted values and kinds.
  */
 export function raw<const Value>(value: Value): Raw<readonly [Value, undefined]>;
-
 export function raw<
   Pairs extends RawPair = CorePairs,
   const Kind extends Pairs[1] & string = Pairs[1] & string,
@@ -64,7 +63,6 @@ export function raw<
   value: ValueOf<Pairs, Kind>,
   kind: Kind,
 ): Raw<PairOf<Pairs, Checked<Pairs, Kind, Kind>>>;
-
 export function raw(value: unknown, kind?: string): Raw {
   return Object.freeze({ [rawMark]: Object.freeze([value, kind] as const) });
 }

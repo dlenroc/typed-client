@@ -21,17 +21,13 @@ export interface StandardSchemaV1<Input = unknown, Output = Input> {
     readonly validate: (
       value: unknown,
     ) => SchemaResult<Output> | Promise<SchemaResult<Output>>;
-    readonly types?:
-      | { readonly input: Input; readonly output: Output }
-      | undefined;
+    readonly types?: { readonly input: Input; readonly output: Output } | undefined;
   };
 }
 
 export interface StandardIssue {
   readonly message: string;
-  readonly path?:
-    | readonly (PropertyKey | { readonly key: PropertyKey })[]
-    | undefined;
+  readonly path?: readonly (PropertyKey | { readonly key: PropertyKey })[] | undefined;
 }
 
 export type FieldScalar = string | number | boolean | bigint | null | undefined;
@@ -100,10 +96,7 @@ export type UrlEncodedResponse = Readonly<
 export type MultipartResponseValue = string | MultipartFile<Uint8Array<ArrayBuffer>>;
 
 export type MultipartResponse = Readonly<
-  Record<
-    string,
-    MultipartResponseValue | readonly MultipartResponseValue[] | undefined
-  >
+  Record<string, MultipartResponseValue | readonly MultipartResponseValue[] | undefined>
 >;
 
 /**

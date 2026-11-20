@@ -104,15 +104,7 @@ function declareBody(kind: string, schema?: unknown): never {
 const noBody: NormalizedBody = declareBody("none");
 
 /** Each built-in body kind, for completion. Transports can add kinds. */
-type KnownKind =
-  | "json"
-  | "text"
-  | "binary"
-  | "urlencoded"
-  | "multipart"
-  | "none"
-  | "blob"
-  | "stream";
+type KnownKind = "json" | "text" | "binary" | "urlencoded" | "multipart" | "none" | "blob" | "stream";
 
 export function json(): BodyDeclaration<"json", undefined>;
 export function json<Value>(): BodyDeclaration<"json", TypeHint<Value>>;
@@ -129,27 +121,21 @@ export function text(schema?: unknown): never {
 }
 
 export function binary(): BodyDeclaration<"binary", undefined>;
-export function binary<const Schema extends SchemaLike>(
-  schema: Schema,
-): BodyDeclaration<"binary", Schema>;
+export function binary<const Schema extends SchemaLike>(schema: Schema): BodyDeclaration<"binary", Schema>;
 export function binary(schema?: unknown): never {
   return declareBody("binary", schema);
 }
 
 export function urlencoded(): BodyDeclaration<"urlencoded", undefined>;
 export function urlencoded<Value>(): BodyDeclaration<"urlencoded", TypeHint<Value>>;
-export function urlencoded<const Schema extends SchemaLike>(
-  schema: Schema,
-): BodyDeclaration<"urlencoded", Schema>;
+export function urlencoded<const Schema extends SchemaLike>(schema: Schema): BodyDeclaration<"urlencoded", Schema>;
 export function urlencoded(schema?: unknown): never {
   return declareBody("urlencoded", schema);
 }
 
 export function multipart(): BodyDeclaration<"multipart", undefined>;
 export function multipart<Value>(): BodyDeclaration<"multipart", TypeHint<Value>>;
-export function multipart<const Schema extends SchemaLike>(
-  schema: Schema,
-): BodyDeclaration<"multipart", Schema>;
+export function multipart<const Schema extends SchemaLike>(schema: Schema): BodyDeclaration<"multipart", Schema>;
 export function multipart(schema?: unknown): never {
   return declareBody("multipart", schema);
 }
@@ -158,9 +144,7 @@ export function none(): BodyDeclaration<"none", undefined> {
   return noBody as never;
 }
 
-export function kind<const Kind extends KnownKind | (string & {})>(
-  kind: Kind,
-): BodyDeclaration<Kind, undefined>;
+export function kind<const Kind extends KnownKind | (string & {})>(kind: Kind): BodyDeclaration<Kind, undefined>;
 export function kind<const Kind extends KnownKind | (string & {}), const Schema extends SchemaLike>(
   kind: Kind,
   schema: Schema,
@@ -173,9 +157,7 @@ function isBody(value: unknown): value is NormalizedBody {
   return typeof (value as Partial<NormalizedBody>).kind === "string";
 }
 
-export function endpoint<const Url extends string>(
-  url: Url,
-): Endpoint<
+export function endpoint<const Url extends string>(url: Url): Endpoint<
   Url,
   PathNames<Url>,
   {
@@ -208,7 +190,8 @@ export function endpoint<const Url extends string, const Declaration extends End
   PreparedMeta<Declaration>
 > & {
   readonly method: "method" extends keyof Declaration
-    ? Exclude<Declaration["method"], undefined> | (undefined extends Declaration["method"] ? "GET" : never)
+    ? | Exclude<Declaration["method"], undefined>
+      | (undefined extends Declaration["method"] ? "GET" : never)
     : "GET";
 };
 
