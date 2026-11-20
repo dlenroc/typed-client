@@ -218,7 +218,14 @@ function escapeFormCharacter(char: string) {
 }
 
 function encodeFormValue(value: string) {
-  return encodeURIComponent(value)
+  // URLSearchParams replaces unpaired UTF-16 surrogates before encoding.
+  let encoded: string;
+  try {
+    encoded = encodeURIComponent(value);
+  } catch {
+    encoded = encodeURIComponent(value.replace(/[\uD800-\uDFFF]/gu, "\uFFFD"));
+  }
+  return encoded
     .replace(formEscapes, escapeFormCharacter)
     .replaceAll("%20", "+");
 }
@@ -334,7 +341,8 @@ function decodeFormValue(encoded: string) {
           bytes[i] = parseInt(run.slice(at, at + 2), 16);
         }
 
-        return decodeUtf8(bytes);
+        // A BOM inside a form field is part of its value.
+        return new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes);
       }
     });
   }
@@ -343,25 +351,19 @@ function decodeFormValue(encoded: string) {
 export function decodeUrlEncoded(text: string): UrlEncodedResponse {
   const result: Record<string, string | string[]> = Object.create(null);
 
-  if (typeof URLSearchParams !== "undefined") {
-    for (const [key, value] of new URLSearchParams(text)) {
-      appendValue(result, key, value);
+  const pairs = (text.startsWith("?") ? text.slice(1) : text).split("&");
+  for (let i = 0; i < pairs.length; i++) {
+    const pair = pairs[i]!;
+    if (pair === "") {
+      continue;
     }
-  } else {
-    const pairs = (text.startsWith("?") ? text.slice(1) : text).split("&");
-    for (let i = 0; i < pairs.length; i++) {
-      const pair = pairs[i]!;
-      if (pair === "") {
-        continue;
-      }
 
-      const equal = pair.indexOf("=");
-      appendValue(
-        result,
-        decodeFormValue(equal < 0 ? pair : pair.slice(0, equal)),
-        decodeFormValue(equal < 0 ? "" : pair.slice(equal + 1)),
-      );
-    }
+    const equal = pair.indexOf("=");
+    appendValue(
+      result,
+      decodeFormValue(equal < 0 ? pair : pair.slice(0, equal)),
+      decodeFormValue(equal < 0 ? "" : pair.slice(equal + 1)),
+    );
   }
 
   return result;

@@ -75,13 +75,18 @@ async function formRequests() {
     }),
     adapter,
   );
-  const fields = { "name space": "café &+~!", tag: ["one", "two"], blank: null };
-  const encoded = "name+space=caf%C3%A9+%26%2B%7E%21&tag=one&tag=two&blank=";
+  const fields = { "name space": "café &+~!", tag: ["one", "two"], blank: null, broken: "\ud800" };
+  const encoded = "name+space=caf%C3%A9+%26%2B%7E%21&tag=one&tag=two&blank=&broken=%EF%BF%BD";
   const result = await form({ query: fields, body: fields });
 
   check(result.body, {
     "form fields preserve escaping and repetition": (value) => value.body === encoded,
     "query fields use the same encoding": (value) => value.url === `/v1/echo?${encoded}`,
+  });
+  const read = c.bind(c.endpoint("/form", { responses: { 200: c.urlencoded() } }), adapter);
+  check((await read()).body, {
+    "malformed form bytes preserve adjacent Unicode": (body) =>
+      body.mixed === "雪\ufffd" && body.bom === "\ufeff\ufffd",
   });
 }
 

@@ -80,7 +80,7 @@ export const testWithServer = test.extend("baseUrl", async ({}, { onCleanup }) =
       response.end(Buffer.from([0xe0, 0xa0, 0xff]));
     } else if (path === "/v1/form") {
       response.setHeader("content-type", "application/x-www-form-urlencoded");
-      response.end("tag=one&tag=two&empty=&bad=%FF");
+      response.end("tag=one&tag=two&empty=&bad=%FF&mixed=雪%FF&bom=%EF%BB%BF%FF");
     } else if (path === "/v1/multipart-tokens") {
       response.setHeader("content-type", 'multipart/form-data; boundary="example"');
       response.end(

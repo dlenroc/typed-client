@@ -203,7 +203,7 @@ describe.each(overHttp)("$name over HTTP", ({ create }) => {
       path: "/form",
       kind: "urlencoded",
       status: 200,
-      expected: { tag: ["one", "two"], empty: "", bad: "\ufffd" },
+      expected: { tag: ["one", "two"], empty: "", bad: "\ufffd", mixed: "雪\ufffd", bom: "\ufeff\ufffd" },
     },
     { path: "/multipart", kind: "multipart", status: 200, expected: { note: "café 🏕" } },
   ] as const)(
